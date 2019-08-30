@@ -2,6 +2,8 @@
 
 Craft Commerce provides a multitude of events for extending its functionality.
 
+TIP: Using Events to extend functionality requires that you build a [custom plugin](https://docs.craftcms.com/v3/extend/plugin-guide.html) or [Module](https://docs.craftcms.com/v3/extend/module-guide.html). Events are not directly accessible through Templates or Twig.
+
 ## Product related events
 
 ### The `beforeCaptureVariantSnapshot` event
