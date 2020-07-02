@@ -11,6 +11,7 @@ use craft\base\SavableComponentInterface;
 use craft\commerce\elements\Subscription;
 use craft\commerce\errors\NotImplementedException;
 use craft\commerce\errors\SubscriptionException;
+use craft\commerce\models\payments\BasePaymentForm;
 use craft\commerce\models\subscriptions\CancelSubscriptionForm;
 use craft\commerce\models\subscriptions\SubscriptionForm;
 use craft\commerce\models\subscriptions\SubscriptionPayment;
@@ -25,14 +26,11 @@ use craft\elements\User;
  */
 interface SubscriptionGatewayInterface extends SavableComponentInterface
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * Cancels a subscription.
      *
      * @param Subscription $subscription the subscription to cancel
-     * @param CancelSubscriptionForm $parameters additional paramters touse
+     * @param CancelSubscriptionForm $parameters additional parameters to use
      * @return SubscriptionResponseInterface
      * @throws SubscriptionException for all subscription-related errors.
      */
@@ -53,6 +51,13 @@ interface SubscriptionGatewayInterface extends SavableComponentInterface
      * @return SubscriptionPayment[]
      */
     public function getSubscriptionPayments(Subscription $subscription): array;
+
+    /**
+     * Refresh the subscription payment history for a given subscription.
+     *
+     * @param Subscription $subscription
+     */
+    public function refreshPaymentHistory(Subscription $subscription);
 
     /**
      * Returns a subscription plan by its reference
@@ -112,4 +117,28 @@ interface SubscriptionGatewayInterface extends SavableComponentInterface
      * @return bool
      */
     public function supportsPlanSwitch(): bool;
+
+    /**
+     * Returns whether this subscription has billing issues.
+     *
+     * @param Subscription $subscription
+     * @return bool
+     */
+    public function getHasBillingIssues(Subscription $subscription): bool;
+
+    /**
+     * Return a description of the billing issue (if any) with this subscription.
+     *
+     * @param Subscription $subscription
+     * @return string
+     */
+    public function getBillingIssueDescription(Subscription $subscription): string;
+
+    /**
+     * Return the form HTML for resolving the billing issue (if any) with this subscription.
+     *
+     * @param Subscription $subscription
+     * @return string
+     */
+    public function getBillingIssueResolveFormHtml(Subscription $subscription): string;
 }

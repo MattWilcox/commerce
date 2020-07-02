@@ -21,9 +21,6 @@ use craft\helpers\UrlHelper;
  */
 class TaxCategory extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID;
      */
@@ -49,8 +46,11 @@ class TaxCategory extends Model
      */
     public $default;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var array Product Types
+     */
+    private $_productTypes;
+
 
     /**
      * Returns the name of this tax category.
@@ -85,16 +85,53 @@ class TaxCategory extends Model
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/taxcategories/' . $this->id);
+        return UrlHelper::cpUrl('commerce/tax/taxcategories/' . $this->id);
+    }
+
+    /**
+     * @param ProductType[] $productTypes
+     */
+    public function setProductTypes($productTypes)
+    {
+        $this->_productTypes = $productTypes;
+    }
+
+    /**
+     * @return ProductType[]
+     */
+    public function getProductTypes(): array
+    {
+        if ($this->_productTypes === null) {
+            $this->_productTypes = Plugin::getInstance()->getProductTypes()->getProductTypesByTaxCategoryId($this->id);
+        }
+
+        return $this->_productTypes;
+    }
+
+    /**
+     * Helper method to just get the product type IDs
+     *
+     * @return int[]
+     */
+    public function getProductTypeIds(): array
+    {
+        $ids = [];
+        foreach ($this->getProductTypes() as $productType) {
+            $ids[] = $productType->id;
+        }
+
+        return $ids;
     }
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['handle'], 'required']
-        ];
+        $rules = parent::defineRules();
+
+        $rules[] = [['handle'], 'required'];
+
+        return $rules;
     }
 }

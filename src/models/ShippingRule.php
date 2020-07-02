@@ -25,9 +25,6 @@ use craft\commerce\records\ShippingRuleCategory as ShippingRuleCategoryRecord;
  */
 class ShippingRule extends Model implements ShippingRuleInterface
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -124,6 +121,11 @@ class ShippingRule extends Model implements ShippingRuleInterface
     public $maxRate = 0;
 
     /**
+     * @var bool Is lite shipping rule
+     */
+    public $isLite = 0;
+
+    /**
      * @param Order $order
      * @return array
      */
@@ -131,7 +133,10 @@ class ShippingRule extends Model implements ShippingRuleInterface
     {
         $orderShippingCategories = [];
         foreach ($order->lineItems as $lineItem) {
-            $orderShippingCategories[] = $lineItem->shippingCategoryId;
+            // Dont' look at the shipping category of non shippable products.
+            if ($lineItem->getPurchasable() && $lineItem->getPurchasable()->getIsShippable()) {
+                $orderShippingCategories[] = $lineItem->shippingCategoryId;
+            }
         }
         $orderShippingCategories = array_unique($orderShippingCategories);
         return $orderShippingCategories;
@@ -162,36 +167,36 @@ class ShippingRule extends Model implements ShippingRuleInterface
      */
     private $_shippingRuleCategories;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
+        $rules = parent::defineRules();
+
+        $rules[] = [
             [
-                [
-                    'name',
-                    'methodId',
-                    'priority',
-                    'enabled',
-                    'minQty',
-                    'maxQty',
-                    'minTotal',
-                    'maxTotal',
-                    'minWeight',
-                    'maxWeight',
-                    'baseRate',
-                    'perItemRate',
-                    'weightRate',
-                    'percentageRate',
-                    'minRate',
-                    'maxRate',
-                ], 'required'
-            ]
+                'name',
+                'methodId',
+                'priority',
+                'enabled',
+                'minQty',
+                'maxQty',
+                'minTotal',
+                'maxTotal',
+                'minWeight',
+                'maxWeight',
+                'baseRate',
+                'perItemRate',
+                'weightRate',
+                'percentageRate',
+                'minRate',
+                'maxRate',
+            ], 'required'
         ];
+
+        return $rules;
     }
 
     /**
@@ -211,21 +216,36 @@ class ShippingRule extends Model implements ShippingRuleInterface
             return false;
         }
 
-        $shippingRuleCategories = $this->getShippingRuleCategories();
+        $lineItems = $order->getLineItems();
 
-        $orderShippingCategories = $this->_getUniqueCategoryIdsInOrder($order);
-        list($disallowedCategories, $requiredCategories) = $this->_getRequiredAndDisallowedCategoriesFromRule($shippingRuleCategories);
-
-        // Does the order have any disallowed categories in the cart?
-        $result = array_intersect($orderShippingCategories, $disallowedCategories);
-        if (!empty($result)) {
-            return false;
+        $nonShippableItems = [];
+        foreach ($lineItems as $item) {
+            $purchasable = $item->getPurchasable();
+            if ($purchasable && !$purchasable->getIsShippable()) {
+                $nonShippableItems[$item->id] = $item->id;
+            }
         }
 
-        // Does the order have all required categories in the cart?
-        $result = !array_diff($requiredCategories, $orderShippingCategories);
-        if (!$result) {
-            return false;
+        $shippableItemsInOrder = count($lineItems) != count($nonShippableItems);
+
+        // If we have some shippable items in the cart, lets look at their allow/disallow rules
+        if ($shippableItemsInOrder) {
+            $shippingRuleCategories = $this->getShippingRuleCategories();
+            $orderShippingCategories = $this->_getUniqueCategoryIdsInOrder($order);
+            list($disallowedCategories, $requiredCategories) = $this->_getRequiredAndDisallowedCategoriesFromRule($shippingRuleCategories);
+
+
+            // Does the order have any disallowed categories in the cart?
+            $result = array_intersect($orderShippingCategories, $disallowedCategories);
+            if (!empty($result)) {
+                return false;
+            }
+
+            // Does the order have all required categories in the cart?
+            $result = !array_diff($requiredCategories, $orderShippingCategories);
+            if (!$result) {
+                return false;
+            }
         }
 
         $this->getShippingRuleCategories();
@@ -235,17 +255,15 @@ class ShippingRule extends Model implements ShippingRuleInterface
         }
 
         $shippingZone = $this->getShippingZone();
-        $shippingAddress = $order->getShippingAddress();
+        $shippingAddress = $order->getShippingAddress() ?? $order->getEstimatedShippingAddress();
 
         if ($shippingZone && !$shippingAddress) {
             return false;
         }
 
         /** @var ShippingAddressZone $shippingZone */
-        if ($shippingZone) {
-            if (!Plugin::getInstance()->getAddresses()->addressWithinZone($shippingAddress, $shippingZone)) {
-                return false;
-            }
+        if ($shippingZone && !Plugin::getInstance()->getAddresses()->addressWithinZone($shippingAddress, $shippingZone)) {
+            return false;
         }
 
         // order qty rules are inclusive (min <= x <= max)
@@ -257,10 +275,10 @@ class ShippingRule extends Model implements ShippingRuleInterface
         }
 
         // order total rules exclude maximum limit (min <= x < max)
-        if ($this->minTotal && $this->minTotal > $order->itemTotal) {
+        if ($this->minTotal && $this->minTotal > $order->getItemSubtotal()) {
             return false;
         }
-        if ($this->maxTotal && $this->maxTotal <= $order->itemTotal) {
+        if ($this->maxTotal && $this->maxTotal <= $order->getItemSubtotal()) {
             return false;
         }
 
@@ -367,8 +385,6 @@ class ShippingRule extends Model implements ShippingRuleInterface
         return $this->description;
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * @param $attribute

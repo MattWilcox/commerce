@@ -10,6 +10,7 @@ namespace craft\commerce\models;
 use Craft;
 use craft\commerce\base\Model;
 use craft\commerce\Plugin;
+use craft\commerce\records\TaxRate as TaxRateRecord;
 use craft\helpers\UrlHelper;
 use craft\i18n\Locale;
 
@@ -18,6 +19,7 @@ use craft\i18n\Locale;
  *
  * @property string $cpEditUrl
  * @property string $rateAsPercent
+ * @property-read bool $isEverywhere
  * @property TaxAddressZone|null $taxZone
  * @property TaxCategory|null $taxCategory
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
@@ -25,9 +27,6 @@ use craft\i18n\Locale;
  */
 class TaxRate extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -39,9 +38,15 @@ class TaxRate extends Model
     public $name;
 
     /**
+     * @var string Code
+     * @since 2.2
+     */
+    public $code;
+
+    /**
      * @var float Rate
      */
-    public $rate = .05;
+    public $rate = .00;
 
     /**
      * @var bool Include
@@ -64,6 +69,11 @@ class TaxRate extends Model
     public $taxCategoryId;
 
     /**
+     * @var int Is this the tax rate for the lite edition
+     */
+    public $isLite;
+
+    /**
      * @var int Tax zone ID
      */
     public $taxZoneId;
@@ -78,17 +88,22 @@ class TaxRate extends Model
      */
     private $_taxZone;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['taxZoneId', 'taxCategoryId', 'name'], 'required']
+        $rules = parent::defineRules();
+
+        $rules[] = [['name'], 'required'];
+        $rules[] = [
+            ['taxCategoryId'], 'required', 'when' => function($model): bool {
+                return !in_array($model->taxable, TaxRateRecord::ORDER_TAXABALES, true);
+            }
         ];
+
+        return $rules;
     }
 
     /**
@@ -96,7 +111,7 @@ class TaxRate extends Model
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/taxrates/' . $this->id);
+        return UrlHelper::cpUrl('commerce/tax/taxrates/' . $this->id);
     }
 
     /**
@@ -114,7 +129,7 @@ class TaxRate extends Model
      */
     public function getTaxZone()
     {
-        if (null === $this->_taxZone) {
+        if (null === $this->_taxZone && $this->taxZoneId) {
             $this->_taxZone = Plugin::getInstance()->getTaxZones()->getTaxZoneById($this->taxZoneId);
         }
 
@@ -131,5 +146,13 @@ class TaxRate extends Model
         }
 
         return $this->_taxCategory;
+    }
+
+    /**
+     * @return bool Does this tax rate apply everywhere
+     */
+    public function getIsEverywhere(): bool
+    {
+        return !$this->getTaxZone();
     }
 }

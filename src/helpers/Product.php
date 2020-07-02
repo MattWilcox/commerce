@@ -13,19 +13,18 @@ use craft\commerce\elements\Variant;
 use craft\commerce\Plugin;
 use craft\helpers\DateTimeHelper;
 use craft\helpers\Localization as LocalizationHelper;
+use craft\web\Request;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use yii\web\HttpException;
 
 /**
- * Class CommerceVariantMatrixHelper
+ * Product helper
  *
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class Product
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * Populates all Variant Models from HUD or POST data
      *
@@ -48,18 +47,18 @@ class Product
         // Need to set the product now so that the variant custom fields
         $variantModel->setProduct($product);
 
-$variantModel->enabled = (bool)($variant['enabled'] ?? 1);
-$variantModel->isDefault = (bool)($variant['isDefault'] ?? 0);
-$variantModel->sku = $variant['sku'] ?? '';
-$variantModel->price = LocalizationHelper::normalizeNumber($variant['price']);
-$variantModel->width = isset($variant['width']) ? LocalizationHelper::normalizeNumber($variant['width']) : null;
-$variantModel->height = isset($variant['height']) ? LocalizationHelper::normalizeNumber($variant['height']) : null;
-$variantModel->length = isset($variant['length']) ? LocalizationHelper::normalizeNumber($variant['length']) : null;
-$variantModel->weight = isset($variant['weight']) ? LocalizationHelper::normalizeNumber($variant['weight']) : null;
-$variantModel->stock = isset($variant['stock']) ? LocalizationHelper::normalizeNumber($variant['stock']) : null;
-$variantModel->hasUnlimitedStock = (bool)($variant['hasUnlimitedStock'] ?? 0);
-$variantModel->minQty = LocalizationHelper::normalizeNumber($variant['minQty']);
-$variantModel->maxQty = LocalizationHelper::normalizeNumber($variant['maxQty']);
+        $variantModel->enabled = (bool)($variant['enabled'] ?? 1);
+        $variantModel->isDefault = (bool)($variant['isDefault'] ?? 0);
+        $variantModel->sku = $variant['sku'] ?? '';
+        $variantModel->price = LocalizationHelper::normalizeNumber($variant['price']);
+        $variantModel->width = isset($variant['width']) ? LocalizationHelper::normalizeNumber($variant['width']) : null;
+        $variantModel->height = isset($variant['height']) ? LocalizationHelper::normalizeNumber($variant['height']) : null;
+        $variantModel->length = isset($variant['length']) ? LocalizationHelper::normalizeNumber($variant['length']) : null;
+        $variantModel->weight = isset($variant['weight']) ? LocalizationHelper::normalizeNumber($variant['weight']) : null;
+        $variantModel->stock = isset($variant['stock']) ? LocalizationHelper::normalizeNumber($variant['stock']) : null;
+        $variantModel->hasUnlimitedStock = (bool)($variant['hasUnlimitedStock'] ?? 0);
+        $variantModel->minQty = LocalizationHelper::normalizeNumber($variant['minQty']);
+        $variantModel->maxQty = LocalizationHelper::normalizeNumber($variant['maxQty']);
 
         if (isset($variant['fields'])) {
             $variantModel->setFieldValues($variant['fields']);
@@ -73,12 +72,19 @@ $variantModel->maxQty = LocalizationHelper::normalizeNumber($variant['maxQty']);
     }
 
     /**
+     * Instantiates the product specified by the post data.
+     *
+     * @param Request|null $request
      * @return ProductModel
      * @throws HttpException
+     * @since 3.1.3
      */
-    public static function populateProductFromPost(): ProductModel
+    public static function productFromPost(Request $request = null): ProductModel
     {
-        $request = Craft::$app->getRequest();
+        if ($request === null) {
+            $request = Craft::$app->getRequest();
+        }
+
         $productId = $request->getBodyParam('productId');
         $siteId = $request->getBodyParam('siteId');
 
@@ -86,19 +92,40 @@ $variantModel->maxQty = LocalizationHelper::normalizeNumber($variant['maxQty']);
             $product = Plugin::getInstance()->getProducts()->getProductById($productId, $siteId);
 
             if (!$product) {
-                throw new HttpException(404, Craft::t('commerce', 'No product with the ID “{id}”', ['id' => $productId]));
+                throw new NotFoundHttpException(Plugin::t('No product with the ID “{id}”', ['id' => $productId]));
             }
         } else {
             $product = new ProductModel();
+            $product->typeId = $request->getBodyParam('typeId');
+            $product->siteId = $siteId ?? $product->siteId;
         }
 
-        $product->typeId = $request->getBodyParam('typeId');
-        $product->siteId = $siteId ?? $product->siteId;
+        return $product;
+    }
+
+    /**
+     * Populates a product from the post data.
+     *
+     * @param ProductModel|null $product
+     * @param Request|null $request
+     * @return ProductModel
+     * @throws HttpException
+     */
+    public static function populateProductFromPost(ProductModel $product = null, Request $request = null): ProductModel
+    {
+        if ($request === null) {
+            $request = Craft::$app->getRequest();
+        }
+
+        if ($product === null) {
+            $product = static::productFromPost($request);
+        }
+
         $product->enabled = (bool)$request->getBodyParam('enabled');
-        if (($postDate = Craft::$app->getRequest()->getBodyParam('postDate')) !== null) {
+        if (($postDate = $request->getBodyParam('postDate')) !== null) {
             $product->postDate = DateTimeHelper::toDateTime($postDate) ?: null;
         }
-        if (($expiryDate = Craft::$app->getRequest()->getBodyParam('expiryDate')) !== null) {
+        if (($expiryDate = $request->getBodyParam('expiryDate')) !== null) {
             $product->expiryDate = DateTimeHelper::toDateTime($expiryDate) ?: null;
         }
         $product->promotable = (bool)$request->getBodyParam('promotable');
@@ -112,9 +139,10 @@ $variantModel->maxQty = LocalizationHelper::normalizeNumber($variant['maxQty']);
         $product->title = $request->getBodyParam('title', $product->title);
 
         $product->setFieldValuesFromRequest('fields');
-
-        if ($request->getBodyParam('variants')) {
-            $product->setVariants($request->getBodyParam('variants'));
+        if ($variants = $request->getBodyParam('variants')) {
+            $product->setVariants($variants);
+        } else {
+            $product->setVariants([]);
         }
 
         return $product;

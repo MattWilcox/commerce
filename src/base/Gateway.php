@@ -11,10 +11,9 @@ use Craft;
 use craft\base\SavableComponent;
 use craft\commerce\elements\Order;
 use craft\commerce\models\payments\BasePaymentForm;
-use craft\commerce\records\Gateway as GatewayRecord;
+use craft\commerce\Plugin;
 use craft\helpers\StringHelper;
 use craft\helpers\UrlHelper;
-use craft\validators\UniqueValidator;
 
 /**
  * Class Gateway
@@ -32,13 +31,7 @@ use craft\validators\UniqueValidator;
  */
 abstract class Gateway extends SavableComponent implements GatewayInterface
 {
-    // Traits
-    // =========================================================================
-
     use GatewayTrait;
-
-    // Public methods
-    // =========================================================================
 
     /**
      * Returns the name of this payment method.
@@ -61,7 +54,7 @@ abstract class Gateway extends SavableComponent implements GatewayInterface
         $params = array_merge(['gateway' => $this->id], $params);
 
         $url = UrlHelper::actionUrl('commerce/webhooks/process-webhook', $params);
-        
+
         return StringHelper::replace($url, Craft::$app->getConfig()->getGeneral()->cpTrigger . '/', '');
     }
 
@@ -91,8 +84,8 @@ abstract class Gateway extends SavableComponent implements GatewayInterface
     public function getPaymentTypeOptions(): array
     {
         return [
-            'authorize' => Craft::t('commerce', 'Authorize Only (Manually Capture)'),
-            'purchase' => Craft::t('commerce', 'Purchase (Authorize and Capture Immediately)'),
+            'authorize' => Plugin::t('Authorize Only (Manually Capture)'),
+            'purchase' => Plugin::t('Purchase (Authorize and Capture Immediately)'),
         ];
     }
 
@@ -103,12 +96,6 @@ abstract class Gateway extends SavableComponent implements GatewayInterface
     {
         return [
             [['paymentType', 'handle'], 'required'],
-            [
-                ['handle'],
-                UniqueValidator::class,
-                'targetClass' => GatewayRecord::class,
-                'targetAttribute' => ['handle']
-            ]
         ];
     }
 
@@ -138,4 +125,15 @@ abstract class Gateway extends SavableComponent implements GatewayInterface
      * @return string|null
      */
     abstract public function getPaymentFormHtml(array $params);
+
+    /**
+     * Returns the transaction hash based on a webhook request
+     *
+     * @return string|null
+     * @since 3.1.9
+     */
+    public function getTransactionHashFromWebhook()
+    {
+        return null;
+    }
 }

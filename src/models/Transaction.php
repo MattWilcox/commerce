@@ -21,14 +21,12 @@ use DateTime;
  * @property Gateway $gateway
  * @property Order $order
  * @property Transaction $parent
+ * @property-read float $refundableAmount
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class Transaction extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -149,8 +147,6 @@ class Transaction extends Model
      */
     private $_children;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
@@ -301,10 +297,12 @@ class Transaction extends Model
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['type', 'status', 'orderId'], 'required']
-        ];
+        $rules = parent::defineRules();
+
+        $rules[] = [['type', 'status', 'orderId'], 'required'];
+
+        return $rules;
     }
 }

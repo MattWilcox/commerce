@@ -9,6 +9,7 @@ namespace craft\commerce\services;
 
 use Craft;
 use craft\commerce\base\Gateway;
+use craft\commerce\db\Table;
 use craft\commerce\elements\Order;
 use craft\commerce\errors\TransactionException;
 use craft\commerce\events\TransactionEvent;
@@ -27,21 +28,26 @@ use yii\base\Component;
  */
 class Transactions extends Component
 {
-    // Constants
-    // =========================================================================
     /**
      * @event TransactionEvent The event that is triggered after a transaction has been saved.
-     *
-     * Plugins can get notified after a transaction has been saved.
      *
      * ```php
      * use craft\commerce\events\TransactionEvent;
      * use craft\commerce\services\Transactions;
+     * use craft\commerce\models\Transaction;
      * use yii\base\Event;
      *
-     * Event::on(Transactions::class, Transactions::EVENT_AFTER_SAVE_TRANSACTION, function(TransactionEvent $e) {
-     *     // Do something - perhaps run our custom logic for failed transactions
-     * });
+     * Event::on(
+     *     Transactions::class,
+     *     Transactions::EVENT_AFTER_SAVE_TRANSACTION,
+     *     function(TransactionEvent $event) {
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *         
+     *         // Run custom logic for failed transactions
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_SAVE_TRANSACTION = 'afterSaveTransaction';
@@ -49,22 +55,27 @@ class Transactions extends Component
     /**
      * @event TransactionEvent The event that is triggered after a transaction has been created.
      *
-     * Plugins can get notified after a transaction has been created.
-     *
      * ```php
      * use craft\commerce\events\TransactionEvent;
      * use craft\commerce\services\Transactions;
+     * use craft\commerce\models\Transaction;
      * use yii\base\Event;
-     *
-     * Event::on(Transactions::class, Transactions::EVENT_AFTER_CREATE_TRANSACTION, function(TransactionEvent $e) {
-     *     // Do something - perhaps run our custom logic depending on the transaction type
-     * });
+     * 
+     * Event::on(
+     *     Transactions::class,
+     *     Transactions::EVENT_AFTER_CREATE_TRANSACTION,
+     *     function(TransactionEvent $event) {
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     * 
+     *         // Run custom logic depending on the transaction type
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_CREATE_TRANSACTION = 'afterCreateTransaction';
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns true if a specific transaction can be refunded.
@@ -74,7 +85,7 @@ class Transactions extends Component
      */
     public function canCaptureTransaction(Transaction $transaction): bool
     {
-        // Can refund only successful authorize transactions
+        // Can only capture successful authorize transactions
         if ($transaction->type !== TransactionRecord::TYPE_AUTHORIZE || $transaction->status !== TransactionRecord::STATUS_SUCCESS) {
             return false;
         }
@@ -145,7 +156,7 @@ class Transactions extends Component
                 'orderId' => $transaction->orderId,
                 'parentId' => $transaction->id
             ])
-            ->from(['{{%commerce_transactions}}'])
+            ->from([Table::TRANSACTIONS])
             ->sum('[[paymentAmount]]');
 
         return $transaction->paymentAmount - $amount;
@@ -223,6 +234,8 @@ class Transactions extends Component
      *
      * @param Transaction $transaction the transaction to delete
      * @return bool
+     * @throws \Throwable
+     * @throws \yii\db\StaleObjectException
      */
     public function deleteTransaction(Transaction $transaction): bool
     {
@@ -233,6 +246,24 @@ class Transactions extends Component
         }
 
         return false;
+    }
+
+    /**
+     * @param int $orderId the order's ID
+     * @return array|Transaction[]
+     */
+    public function getAllTopLevelTransactionsByOrderId($orderId)
+    {
+        $transactions = $this->getAllTransactionsByOrderId($orderId);
+
+        foreach ($transactions as $key => $transaction) {
+            // Remove transactions that have a parentId
+            if ($transaction->parentId) {
+                unset($transactions[$key]);
+            }
+        }
+
+        return $transactions;
     }
 
     /**
@@ -302,7 +333,7 @@ class Transactions extends Component
     public function getTransactionByReferenceAndStatus(string $reference, string $status)
     {
         $result = $this->_createTransactionQuery()
-            ->where(['reference' => $reference, 'status' => $status])
+            ->where(compact('reference', 'status'))
             ->one();
 
         return $result ? new Transaction($result) : null;
@@ -411,8 +442,6 @@ class Transactions extends Component
         return true;
     }
 
-    // Private methods
-    // =========================================================================
     /**
      * Returns a Query object prepped for retrieving Transactions.
      *
@@ -443,7 +472,7 @@ class Transactions extends Component
                 'dateCreated',
                 'dateUpdated',
             ])
-            ->from(['{{%commerce_transactions}}'])
+            ->from([Table::TRANSACTIONS])
             ->orderBy(['id' => SORT_ASC]);
     }
 }

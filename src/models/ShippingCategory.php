@@ -8,6 +8,7 @@
 namespace craft\commerce\models;
 
 use craft\commerce\base\Model;
+use craft\commerce\Plugin;
 use craft\helpers\UrlHelper;
 
 /**
@@ -19,9 +20,6 @@ use craft\helpers\UrlHelper;
  */
 class ShippingCategory extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -47,8 +45,11 @@ class ShippingCategory extends Model
      */
     public $default;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var ProductType[]
+     */
+    private $_productTypes;
+
 
     /**
      * Returns the name of this shipping category.
@@ -65,16 +66,53 @@ class ShippingCategory extends Model
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/shippingcategories/' . $this->id);
+        return UrlHelper::cpUrl('commerce/shipping/shippingcategories/' . $this->id);
+    }
+
+    /**
+     * @param array $productTypes
+     */
+    public function setProductTypes($productTypes)
+    {
+        $this->_productTypes = $productTypes;
+    }
+
+    /**
+     * @return ProductType[]
+     */
+    public function getProductTypes(): array
+    {
+        if ($this->_productTypes === null) {
+            $this->_productTypes = Plugin::getInstance()->getProductTypes()->getProductTypesByShippingCategoryId($this->id);
+        }
+
+        return $this->_productTypes;
+    }
+
+    /**
+     * Helper method to just get the product type IDs
+     *
+     * @return int[]
+     */
+    public function getProductTypeIds(): array
+    {
+        $ids = [];
+        foreach ($this->getProductTypes() as $productType) {
+            $ids[] = $productType->id;
+        }
+
+        return $ids;
     }
 
     /**
      * @return array
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['name', 'handle'], 'required']
-        ];
+        $rules = parent::defineRules();
+
+        $rules [] = [['name', 'handle'], 'required'];
+
+        return $rules;
     }
 }

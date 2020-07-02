@@ -9,13 +9,15 @@ namespace craft\commerce\services;
 
 use Craft;
 use craft\commerce\base\GatewayInterface;
+use craft\commerce\db\Table;
 use craft\commerce\errors\PaymentSourceException;
 use craft\commerce\events\PaymentSourceEvent;
 use craft\commerce\models\payments\BasePaymentForm;
 use craft\commerce\models\PaymentSource;
-use craft\commerce\Plugin as Commerce;
+use craft\commerce\Plugin;
 use craft\commerce\records\PaymentSource as PaymentSourceRecord;
 use craft\db\Query;
+use Throwable;
 use yii\base\Component;
 use yii\base\InvalidConfigException;
 
@@ -27,62 +29,77 @@ use yii\base\InvalidConfigException;
  */
 class PaymentSources extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
-     * @event PaymentSourceEvent The event that is triggered when a payment source is deleted
-     *
-     * Plugins can get notified when a payment source is deleted.
+     * @event PaymentSourceEvent The event that is triggered when a payment source is deleted.
      *
      * ```php
      * use craft\commerce\events\PaymentSourceEvent;
      * use craft\commerce\services\PaymentSources;
+     * use craft\commerce\models\PaymentSource;
      * use yii\base\Event;
      *
-     * Event::on(PaymentSources::class, PaymentSources::EVENT_DELETE_PAYMENT_SOURCE, function(PaymentSourceEvent $e) {
-     *     // Do something - perhaps warn a user they have no valid payment sources saved.
-     * });
+     * Event::on(
+     *     PaymentSources::class,
+     *     PaymentSources::EVENT_DELETE_PAYMENT_SOURCE,
+     *     function(PaymentSourceEvent $event) {
+     *         // @var PaymentSource $source
+     *         $source = $event->paymentSource;
+     *
+     *         // Warn a user they don’t have any valid payment sources saved
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_DELETE_PAYMENT_SOURCE = 'deletePaymentSource';
 
     /**
-     * @event PaymentSourceEvent The event that is triggered before a plan is saved.
-     *
-     * Plugins can get notified before a payment source is added.
+     * @event PaymentSourceEvent The event that is triggered before a payment source is added.
      *
      * ```php
      * use craft\commerce\events\PaymentSourceEvent;
      * use craft\commerce\services\PaymentSources;
+     * use craft\commerce\models\PaymentSource;
      * use yii\base\Event;
      *
-     * Event::on(PaymentSources::class, PaymentSources::EVENT_BEFORE_SAVE_PAYMENT_SOURCE, function(PaymentSourceEvent $e) {
-     *     // Do something
-     * });
+     * Event::on(
+     *     PaymentSources::class,
+     *     PaymentSources::EVENT_BEFORE_SAVE_PAYMENT_SOURCE,
+     *     function(PaymentSourceEvent $event) {
+     *         // @var PaymentSource $source
+     *         $source = $event->paymentSource;
+     *
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_BEFORE_SAVE_PAYMENT_SOURCE = 'beforeSavePaymentSource';
 
     /**
-     * @event PaymentSourceEvent The event that is triggered after a plan is saved.
-     *
-     * Plugins can get notified after a payment source is added.
+     * @event PaymentSourceEvent The event that is triggered after a payment source is added.
      *
      * ```php
      * use craft\commerce\events\PaymentSourceEvent;
      * use craft\commerce\services\PaymentSources;
+     * use craft\commerce\models\PaymentSource;
      * use yii\base\Event;
      *
-     * Event::on(PaymentSources::class, PaymentSources::EVENT_BEFORE_SAVE_PAYMENT_SOURCE, function(PaymentSourceEvent $e) {
-     *     // Do something - perhaps settle any outstanding balance
-     * });
+     * Event::on(
+     *     PaymentSources::class,
+     *     PaymentSources::EVENT_AFTER_SAVE_PAYMENT_SOURCE,
+     *     function(PaymentSourceEvent $event) {
+     *         // @var PaymentSource $source
+     *         $source = $event->paymentSource;
+     *
+     *         // Settle any outstanding balance
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_SAVE_PAYMENT_SOURCE = 'afterSavePaymentSource';
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns a user's payment sources, per the user's ID.
@@ -180,7 +197,12 @@ class PaymentSources extends Component
      */
     public function createPaymentSource(int $userId, GatewayInterface $gateway, BasePaymentForm $paymentForm, string $sourceDescription = null): PaymentSource
     {
-        $source = $gateway->createPaymentSource($paymentForm, $userId);
+        try {
+            $source = $gateway->createPaymentSource($paymentForm, $userId);
+        } catch (\Throwable $exception) {
+            throw new PaymentSourceException($exception->getMessage());
+        }
+
         $source->userId = $userId;
 
         if (!empty($sourceDescription)) {
@@ -188,7 +210,7 @@ class PaymentSources extends Component
         }
 
         if (!$this->savePaymentSource($source)) {
-            throw new PaymentSourceException(Craft::t('commerce', 'Could not create the payment source.'));
+            throw new PaymentSourceException(Plugin::t( 'Could not create the payment source.'));
         }
 
         return $source;
@@ -208,7 +230,7 @@ class PaymentSources extends Component
             $record = PaymentSourceRecord::findOne($paymentSource->id);
 
             if (!$record) {
-                throw new InvalidConfigException(Craft::t('commerce', 'No payment source exists with the ID “{id}”',
+                throw new InvalidConfigException(Plugin::t( 'No payment source exists with the ID “{id}”',
                     ['id' => $paymentSource->id]));
             }
         } else {
@@ -255,14 +277,14 @@ class PaymentSources extends Component
      *
      * @param int $id The ID
      * @return bool
-     * @throws \Throwable in case something went wrong when deleting.
+     * @throws Throwable in case something went wrong when deleting.
      */
     public function deletePaymentSourceById($id): bool
     {
         $record = PaymentSourceRecord::findOne($id);
 
         if ($record) {
-            $gateway = Commerce::getInstance()->getGateways()->getGatewayById($record->gatewayId);
+            $gateway = Plugin::getInstance()->getGateways()->getGatewayById($record->gatewayId);
 
             if ($gateway) {
                 $gateway->deletePaymentSource($record->token);
@@ -283,8 +305,6 @@ class PaymentSources extends Component
         return false;
     }
 
-    // Private methods
-    // =========================================================================
 
     /**
      * Returns a Query object prepped for retrieving gateways.
@@ -302,7 +322,6 @@ class PaymentSources extends Component
                 'description',
                 'response',
             ])
-            ->from(['{{%commerce_paymentsources}}']);
+            ->from([Table::PAYMENTSOURCES]);
     }
-
 }

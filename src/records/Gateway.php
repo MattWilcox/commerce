@@ -7,12 +7,14 @@
 
 namespace craft\commerce\records;
 
+use craft\commerce\db\Table;
 use craft\db\ActiveRecord;
+use DateTime;
 
 /**
  * Gateway record.
  *
- * @property \DateTime $dateArchived
+ * @property DateTime $dateArchived
  * @property bool $isFrontendEnabled
  * @property string $handle
  * @property int $id
@@ -27,14 +29,11 @@ use craft\db\ActiveRecord;
  */
 class Gateway extends ActiveRecord
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public static function tableName(): string
     {
-        return '{{%commerce_gateways}}';
+        return Table::GATEWAYS;
     }
 }

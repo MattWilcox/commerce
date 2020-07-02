@@ -26,22 +26,58 @@ use yii\base\Exception;
  */
 class Pdf extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
-     * @event PdfEvent The event that is triggered before a PDF is rendered
-     * Event handlers can override Commerce's PDF generation by setting [[PdfEvent::pdf]] to a custom-rendered PDF.
+     * @event PdfEvent The event that is triggered before an order’s PDF is rendered.
+     *
+     * Event handlers can customize PDF rendering by modifying several properties on the event object:
+     *
+     * | Property    | Value                                                                                                                     |
+     * | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+     * | `order`     | populated [Order](api:craft\commerce\elements\Order) model                                                                |
+     * | `template`  | optional Twig template path (string) to be used for rendering                                                             |
+     * | `variables` | populated with the variables availble to the template used for rendering                                                  |
+     * | `option`    | optional string for the template that can be used to show different details based on context (example: `receipt`, `ajax`) |
+     *
+     * ```php
+     * use craft\commerce\events\PdfEvent;
+     * use craft\commerce\services\Pdf;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     Pdf::class,
+     *     Pdf::EVENT_BEFORE_RENDER_PDF,
+     *     function(PdfEvent $event) {
+     *         // Modify `$event->order`, `$event->option`, `$event->template`,
+     *         // and `$event->variables` to customize what gets rendered into a PDF
+     *         // ...
+     *     }
+     * );
+     * ```
      */
     const EVENT_BEFORE_RENDER_PDF = 'beforeRenderPdf';
 
     /**
-     * @event PdfEvent The event that is triggered after a PDF is rendered
+     * @event PdfEvent The event that is triggered after an order’s PDF has been rendered.
+     *
+     * Event handlers can override Commerce’s PDF generation by setting the `pdf` property on the event to a custom-rendered PDF string. The event properties will be the same as those from `beforeRenderPdf`, but `pdf` will contain a rendered PDF string and is the only one for which setting a value will make any difference for the resulting PDF output.
+     *
+     * ```php
+     * use craft\commerce\events\PdfEvent;
+     * use craft\commerce\services\Pdf;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     Pdf::class,
+     *     Pdf::EVENT_AFTER_RENDER_PDF,
+     *     function(PdfEvent $event) {
+     *         // Add a watermark to the PDF or forward it to the accounting department
+     *         // ...
+     *     }
+     * );
+     * ```
      */
     const EVENT_AFTER_RENDER_PDF = 'afterRenderPdf';
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns a rendered PDF object for the order.
@@ -49,10 +85,11 @@ class Pdf extends Component
      * @param Order $order
      * @param string $option
      * @param string $templatePath
+     * @param array $variables variables available to the pdf html template. Available to template by the array keys.
      * @return string
      * @throws Exception if no template or order found.
      */
-    public function renderPdfForOrder(Order $order, $option = '', $templatePath = null): string
+    public function renderPdfForOrder(Order $order, $option = '', $templatePath = null, $variables = []): string
     {
         if (null === $templatePath) {
             $templatePath = Plugin::getInstance()->getSettings()->orderPdfPath;
@@ -63,6 +100,7 @@ class Pdf extends Component
             'order' => $order,
             'option' => $option,
             'template' => $templatePath,
+            'variables' => $variables
         ]);
         $this->trigger(self::EVENT_BEFORE_RENDER_PDF, $event);
 
@@ -70,12 +108,15 @@ class Pdf extends Component
             return $event->pdf;
         }
 
+        $variables['order'] = $event->order;
+        $variables['option'] = $event->option;
+
         // Set Craft to the site template mode
         $view = Craft::$app->getView();
         $oldTemplateMode = $view->getTemplateMode();
         $view->setTemplateMode(View::TEMPLATE_MODE_SITE);
 
-        if (!$templatePath || !$view->doesTemplateExist($templatePath)) {
+        if (!$event->template || !$view->doesTemplateExist($event->template)) {
             // Restore the original template mode
             $view->setTemplateMode($oldTemplateMode);
 
@@ -83,12 +124,12 @@ class Pdf extends Component
         }
 
         try {
-            $html = $view->renderTemplate($templatePath, compact('order', 'option'));
+            $html = $view->renderTemplate($event->template, $variables);
         } catch (\Exception $e) {
             // Set the pdf html to the render error.
             Craft::error('Order PDF render error. Order number: ' . $order->getShortNumber() . '. ' . $e->getMessage());
             Craft::$app->getErrorHandler()->logException($e);
-            $html = Craft::t('commerce', 'An error occurred while generating this PDF.');
+            $html = Plugin::t('An error occurred while generating this PDF.');
         }
 
         // Restore the original template mode
@@ -114,26 +155,27 @@ class Pdf extends Component
         $options->setLogOutputFile($dompdfLogFile);
         $options->setIsRemoteEnabled($isRemoteEnabled);
 
-        // Paper Size and Orientation
+        // Set the options
+        $dompdf->setOptions($options);
+
+        // Paper size and orientation
         $pdfPaperSize = Plugin::getInstance()->getSettings()->pdfPaperSize;
         $pdfPaperOrientation = Plugin::getInstance()->getSettings()->pdfPaperOrientation;
-        $options->setDefaultPaperOrientation($pdfPaperOrientation);
-        $options->setDefaultPaperSize($pdfPaperSize);
-
-        $dompdf->setOptions($options);
+        $dompdf->setPaper($pdfPaperSize, $pdfPaperOrientation);
 
         $dompdf->loadHtml($html);
         $dompdf->render();
 
         // Trigger an 'afterRenderPdf' event
-        $event = new PdfEvent([
-            'order' => $order,
-            'option' => $option,
-            'template' => $templatePath,
+        $afterEvent = new PdfEvent([
+            'order' => $event->order,
+            'option' => $event->option,
+            'template' => $event->template,
+            'variables' => $variables,
             'pdf' => $dompdf->output(),
         ]);
-        $this->trigger(self::EVENT_AFTER_RENDER_PDF, $event);
+        $this->trigger(self::EVENT_AFTER_RENDER_PDF, $afterEvent);
 
-        return $event->pdf;
+        return $afterEvent->pdf;
     }
 }

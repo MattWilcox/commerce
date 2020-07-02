@@ -9,11 +9,17 @@ namespace craft\commerce\services;
 
 use Craft;
 use craft\commerce\base\PurchasableInterface;
+use craft\commerce\db\Table;
 use craft\commerce\events\LineItemEvent;
+use craft\commerce\helpers\LineItem as LineItemHelper;
 use craft\commerce\models\LineItem;
+use craft\commerce\Plugin;
 use craft\commerce\records\LineItem as LineItemRecord;
 use craft\db\Query;
+use craft\helpers\DateTimeHelper;
 use craft\helpers\Json;
+use LitEmoji\LitEmoji;
+use Throwable;
 use yii\base\Component;
 use yii\base\Exception;
 use yii\base\InvalidArgumentException;
@@ -26,63 +32,116 @@ use yii\base\InvalidArgumentException;
  */
 class LineItems extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
-     * @event LineItemEvent The event that is raised before a line item is saved.
-     *
-     * Plugins can get notified before a line item is being saved
+     * @event LineItemEvent The event that is triggered before a line item is saved.
      *
      * ```php
      * use craft\commerce\events\LineItemEvent;
      * use craft\commerce\services\LineItems;
+     * use craft\commerce\models\LineItem;
      * use yii\base\Event;
      *
-     * Event::on(LineItems::class, LineItems::EVENT_DEFAULT_ORDER_STATUS, function(LineItemEvent $e) {
-     *     // Do something - perhaps let a 3rd party service know about changes to an order
-     * });
+     * Event::on(
+     *     LineItems::class,
+     *     LineItems::EVENT_BEFORE_SAVE_LINE_ITEM,
+     *     function(LineItemEvent $event) {
+     *         // @var LineItem $lineItem
+     *         $lineItem = $event->lineItem;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *
+     *         // Notify a third party service about changes to an order
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_BEFORE_SAVE_LINE_ITEM = 'beforeSaveLineItem';
 
     /**
-     * @event LineItemEvent The event that is raised after a line item is saved.
-     *
-     * Plugins can get notified after a line item is being saved
+     * @event LineItemEvent The event that is triggeredd after a line item is saved.
      *
      * ```php
      * use craft\commerce\events\LineItemEvent;
      * use craft\commerce\services\LineItems;
+     * use craft\commerce\models\LineItem;
      * use yii\base\Event;
      *
-     * Event::on(LineItems::class, LineItems::EVENT_DEFAULT_ORDER_STATUS, function(LineItemEvent $e) {
-     *     // Do something - perhaps reserve the stock
-     * });
+     * Event::on(
+     *     LineItems::class,
+     *     LineItems::EVENT_AFTER_SAVE_LINE_ITEM,
+     *     function(LineItemEvent $event) {
+     *         // @var LineItem $lineItem
+     *         $lineItem = $event->lineItem;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *
+     *         // Reserve stock
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_SAVE_LINE_ITEM = 'afterSaveLineItem';
 
     /**
-     * @event LineItemEvent This event is raised when a new line item is created from a purchasable
+     * @event LineItemEvent The event that is triggered after a line item has been created from a purchasable.
+     *
+     * ```php
+     * use craft\commerce\events\LineItemEvent;
+     * use craft\commerce\services\LineItems;
+     * use craft\commerce\models\LineItem;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     LineItems::class,
+     *     LineItems::EVENT_CREATE_LINE_ITEM,
+     *     function(LineItemEvent $event) {
+     *         // @var LineItem $lineItem
+     *         $lineItem = $event->lineItem;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *
+     *         // Call a third party service based on the line item options
+     *         // ...
+     *     }
+     * );
+     * ```
      */
     const EVENT_CREATE_LINE_ITEM = 'createLineItem';
 
     /**
-     * @event LineItemEvent This event is raised when a new line item is populated from a purchasable
+     * @event LineItemEvent The event that is triggered as a line item is being populated from a purchasable.
+     *
+     * ```php
+     * use craft\commerce\events\LineItemEvent;
+     * use craft\commerce\services\LineItems;
+     * use craft\commerce\models\LineItem;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     LineItems::class,
+     *     LineItems::EVENT_POPULATE_LINE_ITEM,
+     *     function(LineItemEvent $event) {
+     *         // @var LineItem $lineItem
+     *         $lineItem = $event->lineItem;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *
+     *         // Modify the price of a line item
+     *         // ...
+     *     }
+     * );
+     * ```
      */
     const EVENT_POPULATE_LINE_ITEM = 'populateLineItem';
 
-    // Properties
-    // =========================================================================
 
     /**
      * @var LineItem[]
      */
     private $_lineItemsByOrderId = [];
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns an order's line items, per the order's ID.
@@ -95,15 +154,17 @@ class LineItems extends Component
         if (!isset($this->_lineItemsByOrderId[$orderId])) {
             $results = $this->_createLineItemQuery()
                 ->where(['orderId' => $orderId])
+                ->orderBy('dateCreated DESC')
                 ->all();
-            $lineItems = [];
+
+            $this->_lineItemsByOrderId[$orderId] = [];
 
             foreach ($results as $result) {
                 $result['snapshot'] = Json::decodeIfJson($result['snapshot']);
-                $lineItems[] = new LineItem($result);
+                $lineItem = new LineItem($result);
+                $lineItem->typecastAttributes();
+                $this->_lineItemsByOrderId[$orderId][] = $lineItem;
             }
-
-            $this->_lineItemsByOrderId[$orderId] = $lineItems;
         }
 
         return $this->_lineItemsByOrderId[$orderId];
@@ -118,14 +179,11 @@ class LineItems extends Component
      * @param int $orderId
      * @param int $purchasableId the purchasable's ID
      * @param array $options Options for the line item
-     * @param int $qty
-     * @param string $note
      * @return LineItem
      */
     public function resolveLineItem(int $orderId, int $purchasableId, array $options = []): LineItem
     {
-        ksort($options);
-        $signature = md5(Json::encode($options));
+        $signature = LineItemHelper::generateOptionsSignature($options);
 
         $result = $this->_createLineItemQuery()
             ->where([
@@ -137,6 +195,7 @@ class LineItems extends Component
 
         if ($result) {
             $lineItem = new LineItem($result);
+            $lineItem->typecastAttributes();
         } else {
             $lineItem = $this->createLineItem($orderId, $purchasableId, $options);
         }
@@ -150,7 +209,7 @@ class LineItems extends Component
      * @param LineItem $lineItem The line item to save.
      * @param bool $runValidation Whether the Line Item should be validated.
      * @return bool
-     * @throws \Throwable
+     * @throws Throwable
      */
     public function saveLineItem(LineItem $lineItem, bool $runValidation = true): bool
     {
@@ -162,7 +221,7 @@ class LineItems extends Component
             $lineItemRecord = LineItemRecord::findOne($lineItem->id);
 
             if (!$lineItemRecord) {
-                throw new Exception(Craft::t('commerce', 'No line item exists with the ID “{id}”',
+                throw new Exception(Plugin::t( 'No line item exists with the ID “{id}”',
                     ['id' => $lineItem->id]));
             }
         }
@@ -184,6 +243,8 @@ class LineItems extends Component
         $lineItemRecord->orderId = $lineItem->orderId;
         $lineItemRecord->taxCategoryId = $lineItem->taxCategoryId;
         $lineItemRecord->shippingCategoryId = $lineItem->shippingCategoryId;
+        $lineItemRecord->sku = $lineItem->sku;
+        $lineItemRecord->description = $lineItem->description;
 
         $lineItemRecord->options = $lineItem->getOptions();
         $lineItemRecord->optionsSignature = $lineItem->getOptionsSignature();
@@ -197,16 +258,16 @@ class LineItems extends Component
         $lineItemRecord->height = $lineItem->height;
 
         $lineItemRecord->snapshot = $lineItem->snapshot;
-        $lineItemRecord->note = $lineItem->note;
+        $lineItemRecord->note = LitEmoji::unicodeToShortcode($lineItem->note);
+        $lineItemRecord->privateNote = LitEmoji::unicodeToShortcode($lineItem->privateNote ?? '');
+        $lineItemRecord->lineItemStatusId = $lineItem->lineItemStatusId;
 
         $lineItemRecord->saleAmount = $lineItem->saleAmount;
         $lineItemRecord->salePrice = $lineItem->salePrice;
         $lineItemRecord->total = $lineItem->getTotal();
         $lineItemRecord->subtotal = $lineItem->getSubtotal();
 
-
         if (!$lineItem->hasErrors()) {
-
             $db = Craft::$app->getDb();
             $transaction = $db->beginTransaction();
 
@@ -214,13 +275,16 @@ class LineItems extends Component
                 $success = $lineItemRecord->save(false);
 
                 if ($success) {
+                    $dateCreated = DateTimeHelper::toDateTime($lineItemRecord->dateCreated);
+                    $lineItem->dateCreated = $dateCreated;
+
                     if ($isNewLineItem) {
                         $lineItem->id = $lineItemRecord->id;
                     }
 
                     $transaction->commit();
                 }
-            } catch (\Throwable $e) {
+            } catch (Throwable $e) {
                 $transaction->rollBack();
                 throw $e;
             }
@@ -230,6 +294,11 @@ class LineItems extends Component
                     'lineItem' => $lineItem,
                     'isNew' => $isNewLineItem,
                 ]));
+            }
+
+            // Clear cache on save
+            if (isset($this->_lineItemsByOrderId[$lineItem->orderId])) {
+                unset($this->_lineItemsByOrderId[$lineItem->orderId]);
             }
 
             return $success;
@@ -250,7 +319,13 @@ class LineItems extends Component
             ->where(['id' => $id])
             ->one();
 
-        return $result ? new LineItem($result) : null;
+        if ($result) {
+            $lineItem = new LineItem($result);
+            $lineItem->typecastAttributes();
+            return $lineItem;
+        }
+
+        return null;
     }
 
     /**
@@ -275,9 +350,9 @@ class LineItems extends Component
 
         /** @var PurchasableInterface $purchasable */
         $purchasable = Craft::$app->getElements()->getElementById($purchasableId);
-        $lineItem->setPurchasable($purchasable);
 
         if ($purchasable && ($purchasable instanceof PurchasableInterface)) {
+            $lineItem->setPurchasable($purchasable);
             $lineItem->populateFromPurchasable($purchasable);
         } else {
             throw new InvalidArgumentException('Invalid purchasable ID');
@@ -307,8 +382,6 @@ class LineItems extends Component
         return (bool)LineItemRecord::deleteAll(['orderId' => $orderId]);
     }
 
-    // Private methods
-    // =========================================================================
 
     /**
      * Returns a Query object prepped for retrieving line items.
@@ -322,8 +395,9 @@ class LineItems extends Component
                 'id',
                 'options',
                 'price',
-                'saleAmount',
                 'salePrice',
+                'sku',
+                'description',
                 'weight',
                 'length',
                 'height',
@@ -331,11 +405,14 @@ class LineItems extends Component
                 'qty',
                 'snapshot',
                 'note',
+                'privateNote',
                 'purchasableId',
                 'orderId',
                 'taxCategoryId',
-                'shippingCategoryId'
+                'shippingCategoryId',
+                'lineItemStatusId',
+                'dateCreated',
             ])
-            ->from(['{{%commerce_lineitems}} lineItems']);
+            ->from([Table::LINEITEMS . ' lineItems']);
     }
 }

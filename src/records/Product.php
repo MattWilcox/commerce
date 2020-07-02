@@ -7,8 +7,10 @@
 
 namespace craft\commerce\records;
 
+use craft\commerce\db\Table;
 use craft\db\ActiveRecord;
 use craft\records\Element;
+use DateTime;
 use yii\db\ActiveQueryInterface;
 
 /**
@@ -22,10 +24,10 @@ use yii\db\ActiveQueryInterface;
  * @property float defaultWeight
  * @property float defaultWidth
  * @property ActiveQueryInterface $element
- * @property \DateTime $expiryDate
+ * @property DateTime $expiryDate
  * @property bool $freeShipping
  * @property int $id
- * @property \DateTime $postDate
+ * @property DateTime $postDate
  * @property bool $promotable
  * @property bool $availableForPurchase
  * @property ActiveQueryInterface $shippingCategory
@@ -40,15 +42,12 @@ use yii\db\ActiveQueryInterface;
  */
 class Product extends ActiveRecord
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public static function tableName(): string
     {
-        return '{{%commerce_products}}';
+        return Table::PRODUCTS;
     }
 
     /**

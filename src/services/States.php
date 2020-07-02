@@ -8,25 +8,26 @@
 namespace craft\commerce\services;
 
 use Craft;
+use craft\commerce\db\Table;
 use craft\commerce\models\State;
+use craft\commerce\Plugin;
 use craft\commerce\records\State as StateRecord;
 use craft\db\Query;
+use craft\helpers\ArrayHelper;
 use yii\base\Component;
 use yii\base\Exception;
 
 /**
  * State service.
  *
- * @property State[]|array $allStates an array of all states
+ * @property State[] $allStates an array of all states
+ * @property array $allStatesAsList
  * @property array $statesGroupedByCountries all states grouped by countries
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class States extends Component
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var bool
      */
@@ -40,7 +41,17 @@ class States extends Component
     /**
      * @var State[]
      */
-    private $_statesOrderedByName = [];
+    private $_enabledStatesById = [];
+
+    /**
+     * @var State[]
+     */
+    private $_statesAsOrdered = [];
+
+    /**
+     * @var State[]
+     */
+    private $_enabledStatesAsOrdered = [];
 
     /**
      * @var State[][]
@@ -52,8 +63,6 @@ class States extends Component
      */
     private $_statesByShippingZoneId = [];
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns a state by its ID.
@@ -92,29 +101,67 @@ class States extends Component
     public function getStateByAbbreviation(int $countryId, string $abbreviation)
     {
         $result = $this->_createStatesQuery()
-            ->where(['countryId' => $countryId, 'abbreviation' => $abbreviation])
+            ->where(compact('countryId', 'abbreviation'))
             ->one();
 
         return $result ? new State($result) : null;
     }
 
     /**
-     * Returns all states grouped by countries.
+     * Returns all states indexed by ID
      *
-     * @return array 2D array of states indexed by their ids grouped by country ids.
+     * @return array
      */
     public function getAllStatesAsList(): array
     {
         $states = $this->getAllStates();
+        return ArrayHelper::map($states, 'id', 'name');
+    }
+
+    /**
+     * Returns all states grouped by countries.
+     *
+     * @return array 2D array of states indexed by their ids grouped by country ids.
+     * @since 3.0
+     */
+    public function getAllStatesAsListGroupedByCountryId(): array
+    {
+        $states = $this->getAllEnabledStates();
         $cid2state = [];
 
         foreach ($states as $state) {
             $cid2state += [$state->countryId => []];
+            $cid2state[$state->countryId][$state->id] = $state->name;
+        }
 
-            if (!count($cid2state[$state->countryId])) {
-                $cid2state[$state->countryId][null] = '';
-            }
+        return $cid2state;
+    }
 
+    /**
+     * Returns all enabled states as array indexed by ID
+     *
+     * @return array
+     * @since 3.0
+     */
+    public function getAllEnabledStatesAsList(): array
+    {
+        $states = $this->getAllEnabledStates();
+        return ArrayHelper::map($states, 'id', 'name');
+    }
+
+    /**
+     * Returns all enabled states grouped by countries.
+     *
+     * @return array 2D array of states indexed by their ids grouped by country ids.
+     * @since 3.0
+     */
+    public function getAllEnabledStatesAsListGroupedByCountryId(): array
+    {
+        $states = $this->getAllEnabledStates();
+        $cid2state = [];
+
+        foreach ($states as $state) {
+            $cid2state += [$state->countryId => []];
             $cid2state[$state->countryId][$state->id] = $state->name;
         }
 
@@ -130,20 +177,51 @@ class States extends Component
     {
         if (!$this->_fetchedAllStates) {
             $results = $this->_createStatesQuery()
-                ->innerJoin('{{%commerce_countries}} countries', '[[states.countryId]] = [[countries.id]]')
-                ->orderBy(['countries.name' => SORT_ASC, 'states.name' => SORT_ASC])
+                ->innerJoin(Table::COUNTRIES . ' countries', '[[states.countryId]] = [[countries.id]]')
+                ->addSelect('[[countries.enabled]] as countryEnabled')
+                ->orderBy(['countries.sortOrder' => SORT_ASC, 'states.sortOrder' => SORT_ASC])
                 ->all();
 
             foreach ($results as $row) {
+                $countryEnabled = $row['countryEnabled'];
+                unset($row['countryEnabled']);
+
                 $state = new State($row);
                 $this->_statesById[$row['id']] = $state;
-                $this->_statesOrderedByName[] = $state;
+                $this->_statesAsOrdered[] = $state;
+
+                if ($state->enabled && $countryEnabled) {
+                    $this->_enabledStatesById[$row['id']] = $state;
+                    $this->_enabledStatesAsOrdered[] = $state;
+                }
             }
 
-            $this->_fetchedAllStates;
+            $this->_fetchedAllStates = true;
         }
 
-        return $this->_statesOrderedByName;
+        return $this->_statesAsOrdered;
+    }
+
+    /**
+     * @param int $countryId
+     * @return array
+     */
+    public function getStatesByCountryId(int $countryId): array
+    {
+        return ArrayHelper::where($this->getAllStates(), 'countryId', $countryId);
+    }
+
+    /**
+     * Returns an array of all enabled states.
+     *
+     * @return State[] An array of all enabled states.
+     * @since 3.0
+     */
+    public function getAllEnabledStates(): array
+    {
+        $this->getAllStates();
+
+        return $this->_enabledStatesAsOrdered;
     }
 
     /**
@@ -156,7 +234,7 @@ class States extends Component
     {
         if (!isset($this->_statesByTaxZoneId[$taxZoneId])) {
             $results = $this->_createStatesQuery()
-                ->innerJoin('{{%commerce_taxzone_states}} taxZoneStates', '[[states.id]] = [[taxZoneStates.stateId]]')
+                ->innerJoin(Table::TAXZONE_STATES . ' taxZoneStates', '[[states.id]] = [[taxZoneStates.stateId]]')
                 ->where(['taxZoneStates.taxZoneId' => $taxZoneId])
                 ->all();
 
@@ -182,7 +260,7 @@ class States extends Component
     {
         if (!isset($this->_statesByShippingZoneId[$shippingZoneId])) {
             $results = $this->_createStatesQuery()
-                ->innerJoin('{{%commerce_shippingzone_states}} shippingZoneStates', '[[states.id]] = [[shippingZoneStates.stateId]]')
+                ->innerJoin(Table::SHIPPINGZONE_STATES . ' shippingZoneStates', '[[states.id]] = [[shippingZoneStates.stateId]]')
                 ->where(['shippingZoneStates.shippingZoneId' => $shippingZoneId])
                 ->all();
 
@@ -212,7 +290,7 @@ class States extends Component
             $record = StateRecord::findOne($model->id);
 
             if (!$record) {
-                throw new Exception(Craft::t('commerce', 'No state exists with the ID “{id}”',
+                throw new Exception(Plugin::t('No state exists with the ID “{id}”',
                     ['id' => $model->id]));
             }
         } else {
@@ -228,6 +306,7 @@ class States extends Component
         $record->name = $model->name;
         $record->abbreviation = $model->abbreviation;
         $record->countryId = $model->countryId;
+        $record->enabled = (bool)$model->enabled;
 
         // Save it!
         $record->save(false);
@@ -255,8 +334,23 @@ class States extends Component
         return false;
     }
 
-    // Private methods
-    // =========================================================================
+    /**
+     * @param array $ids
+     * @return bool
+     * @throws \yii\db\Exception
+     * @since 3.1
+     */
+    public function reorderStates(array $ids): bool
+    {
+        $command = Craft::$app->getDb()->createCommand();
+
+        foreach ($ids as $index => $id) {
+            $command->update(Table::STATES, ['sortOrder' => $index + 1], ['id' => $id])->execute();
+        }
+
+        return true;
+    }
+
     /**
      * Returns a Query object prepped for retrieving States.
      *
@@ -269,9 +363,11 @@ class States extends Component
                 'states.id',
                 'states.name',
                 'states.abbreviation',
-                'states.countryId'
+                'states.countryId',
+                'states.enabled',
+                'states.sortOrder'
             ])
-            ->from(['{{%commerce_states}} states'])
-            ->orderBy(['name' => SORT_ASC]);
+            ->from([Table::STATES . ' states'])
+            ->orderBy(['states.sortOrder' => SORT_ASC]);
     }
 }

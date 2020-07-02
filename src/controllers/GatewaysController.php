@@ -24,9 +24,6 @@ use yii\web\Response;
  */
 class GatewaysController extends BaseAdminController
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @return Response
      */
@@ -47,10 +44,7 @@ class GatewaysController extends BaseAdminController
      */
     public function actionEdit(int $id = null, GatewayInterface $gateway = null): Response
     {
-        $variables = [
-            'id' => $id,
-            'gateway' => $gateway
-        ];
+        $variables = compact('id', 'gateway');
 
         $gatewayService = Plugin::getInstance()->getGateways();
 
@@ -66,7 +60,7 @@ class GatewaysController extends BaseAdminController
             }
         }
 
-        /** @var string[] $allGatewayTypes */
+        /** @var string[]|GatewayInterface[] $allGatewayTypes */
         $allGatewayTypes = $gatewayService->getAllGatewayTypes();
 
         // Make sure the selected gateway class is in there
@@ -95,14 +89,14 @@ class GatewaysController extends BaseAdminController
         if ($variables['gateway']->id) {
             $variables['title'] = $variables['gateway']->name;
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a new gateway');
+            $variables['title'] = Plugin::t('Create a new gateway');
         }
         return $this->renderTemplate('commerce/settings/gateways/_edit', $variables);
     }
 
     /**
-     * @throws HttpException
      * @return Response|null
+     * @throws HttpException
      */
     public function actionSave()
     {
@@ -112,9 +106,10 @@ class GatewaysController extends BaseAdminController
         $gatewayService = Plugin::getInstance()->getGateways();
 
         $type = $request->getRequiredParam('type');
+        $gatewayId = $request->getBodyParam('id');
 
         $config = [
-            'id' => $request->getBodyParam('id'),
+            'id' => $gatewayId,
             'type' => $type,
             'name' => $request->getBodyParam('name'),
             'handle' => $request->getBodyParam('handle'),
@@ -128,6 +123,14 @@ class GatewaysController extends BaseAdminController
             $config['isArchived'] = false;
         }
 
+        // If this is an existing gateway, populate with properties unchangeable by this action.
+        if ($gatewayId) {
+            /** @var Gateway $savedGateway */
+            $savedGateway = $gatewayService->getGatewayById($gatewayId);
+            $config['uid'] = $savedGateway->uid;
+            $config['sortOrder'] = $savedGateway->sortOrder;
+        }
+
         /** @var Gateway $gateway */
         $gateway = $gatewayService->createGateway($config);
 
@@ -135,7 +138,7 @@ class GatewaysController extends BaseAdminController
 
         // Save it
         if (!Plugin::getInstance()->getGateways()->saveGateway($gateway)) {
-            $session->setError(Craft::t('commerce', 'Couldn’t save gateway.'));
+            $session->setError(Plugin::t('Couldn’t save gateway.'));
 
             // Send the volume back to the template
             Craft::$app->getUrlManager()->setRouteParams([
@@ -145,8 +148,8 @@ class GatewaysController extends BaseAdminController
             return null;
         }
 
-        $session->setNotice(Craft::t('commerce', 'Gateway saved.'));
-        $this->redirectToPostedUrl($gateway);
+        $session->setNotice(Plugin::t('Gateway saved.'));
+        return $this->redirectToPostedUrl($gateway);
     }
 
     /**
@@ -163,7 +166,7 @@ class GatewaysController extends BaseAdminController
             return $this->asJson(['success' => true]);
         }
 
-        return $this->asErrorJson(Craft::t('commerce', 'Could not archive gateway.'));
+        return $this->asErrorJson(Plugin::t('Could not archive gateway.'));
     }
 
     /**
@@ -179,6 +182,6 @@ class GatewaysController extends BaseAdminController
             return $this->asJson(['success' => $success]);
         }
 
-        return $this->asJson(['error' => Craft::t('commerce', 'Couldn’t reorder gateways.')]);
+        return $this->asJson(['error' => Plugin::t('Couldn’t reorder gateways.')]);
     }
 }

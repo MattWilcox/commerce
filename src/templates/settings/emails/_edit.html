@@ -1,9 +1,11 @@
-{% extends "commerce/_layouts/settingscp" %}
+{% extends "commerce/_layouts/cp" %}
 
 {% set crumbs = [
     { label: "Commerce Settings"|t('commerce'), url: url('commerce/settings') },
     { label: "Emails"|t('commerce'), url: url('commerce/settings/emails') },
 ] %}
+
+{% set selectedSubnavItem = 'settings' %}
 
 {% set fullPageForm = true %}
 
@@ -18,23 +20,32 @@
     {{ forms.textField({
         first: true,
         label: "Name"|t('commerce'),
-        instructions: "What this email will be called in the CP."|t('commerce'),
+        instructions: "What this email will be called in the control panel."|t('commerce'),
         id: 'name',
         name: 'name',
         value: email.name,
         errors: email.getErrors('name'),
         autofocus: true,
-        required: true,
-        translatable: true
+        required: true
     }) }}
 
     {{ forms.textField({
         label: "Email Subject"|t('commerce'),
+        instructions: "The subject line of the email. Twig code can be used here."|t('commerce'),
         id: 'subject',
         name: 'subject',
         value: email.subject,
         errors: email.getErrors('subject'),
         required: true,
+    }) }}
+
+    {{ forms.textField({
+        label: "Reply To"|t('commerce'),
+        instructions: "The reply to email address. Leave blank for normal reply to of email sender. Twig code can be used here."|t('commerce'),
+        id: 'replyTo',
+        name: 'replyTo',
+        value: email.replyTo,
+        errors: email.getErrors('replyTo')
     }) }}
 
     {% set recipientInput %}
@@ -67,12 +78,14 @@
     {{ forms.field({
         id: 'recipient-type',
         label: 'Recipient'|t('commerce'),
+        instructions: 'The recipient of the email.'|t('commerce'),
         errors: email.getErrors('to'),
         required: true,
     }, recipientInput) }}
 
     {{ forms.textField({
         label: 'BCC’d Recipient'|t('commerce'),
+        instructions: 'Addition recipients that should recieve this email. Twig code can be used here.'|t('commerce'),
         id: 'bcc',
         name: 'bcc',
         value: email.bcc,
@@ -80,8 +93,17 @@
     }) }}
 
     {{ forms.textField({
+        label: 'CC’d Recipient'|t('commerce'),
+        instructions: 'Addition recipients that should recieve this email. Twig code can be used here.'|t('commerce'),
+        id: 'cc',
+        name: 'cc',
+        value: email.cc,
+        errors: email.getErrors('cc'),
+    }) }}
+
+    {{ forms.textField({
         label: 'HTML Email Template Path'|t('commerce'),
-        instructions: 'The template to be used for HTML emails.'|t('commerce'),
+        instructions: 'The template to be used for HTML emails. Twig code can be used here.'|t('commerce'),
         id: 'templatePath',
         name: 'templatePath',
         value: email.templatePath,
@@ -89,9 +111,18 @@
         required: true,
     }) }}
 
+    {{ forms.textField({
+        label: 'Plain Text Email Template Path'|t('commerce'),
+        instructions: 'The template to be used for plain text emails. Twig code can be used here.'|t('commerce'),
+        id: 'plainTextTemplatePath',
+        name: 'plainTextTemplatePath',
+        value: email.plainTextTemplatePath,
+        errors: email.getErrors('plainTextTemplatePath'),
+    }) }}
+
     {{ forms.lightswitchField({
         label: "Attach PDF"|t('commerce'),
-        instructions: 'This email should render the order PDF template and attach it to the email.'|t('commerce'),
+        instructions: 'This email should render the order PDF template and include it as an attachment.'|t('commerce'),
         id: 'attach-pdf',
         name: 'attachPdf',
         value: 1,
@@ -102,7 +133,7 @@
     <div id="pdf-template-path-container"{% if not email.attachPdf %} class="hidden"{% endif %}>
     {{ forms.textField({
         label: 'PDF Template Path'|t('commerce'),
-        instructions: 'By default the PDF template path is the \'Order PDF Template\' in the general commerce config, but can choose a different template for this email\'s PDF. '|t('commerce'),
+        instructions: "By default the PDF template path is the 'Order PDF Template' in the general commerce config, but can choose a different template for this email's PDF."|t('commerce'),
         placeholder: craft.commerce.settings.orderPdfPath,
         id: 'pdf-template-path',
         name: 'pdfTemplatePath',

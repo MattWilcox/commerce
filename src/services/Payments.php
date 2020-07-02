@@ -10,6 +10,7 @@ namespace craft\commerce\services;
 use Craft;
 use craft\commerce\base\Gateway;
 use craft\commerce\base\RequestResponseInterface;
+use craft\commerce\db\Table;
 use craft\commerce\elements\Order;
 use craft\commerce\errors\PaymentException;
 use craft\commerce\errors\RefundException;
@@ -23,6 +24,10 @@ use craft\commerce\models\Transaction;
 use craft\commerce\Plugin;
 use craft\commerce\records\Transaction as TransactionRecord;
 use craft\db\Query;
+use craft\elements\Asset;
+use craft\helpers\ArrayHelper;
+use Exception;
+use Throwable;
 use yii\base\Component;
 
 /**
@@ -33,131 +38,192 @@ use yii\base\Component;
  */
 class Payments extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
-     * @event TransactionEvent The event that is triggered after a payment transaction is made
-     *
-     * Plugins can get notified after a payment transaction is made
+     * @event TransactionEvent The event that is triggered after a payment transaction is made.
      *
      * ```php
      * use craft\commerce\events\TransactionEvent;
      * use craft\commerce\services\Payments;
+     * use craft\commerce\models\Transaction;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_AFTER_PAYMENT_TRANSACTION, function(TransactionEvent $e) {
-     *     // Do something - perhaps check if that was a authorize transaction and make sure that warehouse team is on top of it
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_AFTER_PAYMENT_TRANSACTION,
+     *     function(TransactionEvent $event) {
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *
+     *         // Check whether it was an authorize transaction
+     *         // and make sure that warehouse team is on top of it
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_PAYMENT_TRANSACTION = 'afterPaymentTransaction';
 
     /**
-     * @event TransactionEvent The event that is triggered before a transaction is captured
-     *
-     * Plugins can get notified before a payment transaction is captured
+     * @event TransactionEvent The event that is triggered before a payment transaction is captured.
      *
      * ```php
      * use craft\commerce\events\TransactionEvent;
      * use craft\commerce\services\Payments;
+     * use craft\commerce\models\Transaction;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_BEFORE_CAPTURE_TRANSACTION, function(TransactionEvent $e) {
-     *     // Do something - maybe check if the shipment is really ready before capturing
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_BEFORE_CAPTURE_TRANSACTION,
+     *     function(TransactionEvent $event) {
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *
+     *         // Check that shipment’s ready before capturing
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_BEFORE_CAPTURE_TRANSACTION = 'beforeCaptureTransaction';
 
     /**
-     * @event TransactionEvent The event that is triggered after a transaction is captured
-     *
-     * Plugins can get notified after a payment transaction is captured
+     * @event TransactionEvent The event that is triggered after a payment transaction is captured.
      *
      * ```php
      * use craft\commerce\events\TransactionEvent;
      * use craft\commerce\services\Payments;
+     * use craft\commerce\models\Transaction;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_AFTER_CAPTURE_TRANSACTION, function(TransactionEvent $e) {
-     *     // Do something - probably notify warehouse that we're ready to ship
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_AFTER_CAPTURE_TRANSACTION,
+     *     function(TransactionEvent $event) {
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *
+     *         // Notify the warehouse we're ready to ship
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_CAPTURE_TRANSACTION = 'afterCaptureTransaction';
 
     /**
-     * @event TransactionEvent The event that is triggered before a transaction is refunded
-     *
-     * Plugins can get notified before a transaction is refunded
+     * @event TransactionEvent The event that is triggered before a transaction is refunded.
      *
      * ```php
      * use craft\commerce\events\RefundTransactionEvent;
      * use craft\commerce\services\Payments;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_BEFORE_REFUND_TRANSACTION, function(RefundTransactionEvent $e) {
-     *     // Do something - perhaps check if refund amount more than half the transaction and do something based on that
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_BEFORE_REFUND_TRANSACTION,
+     *     function(RefundTransactionEvent $event) {
+     *         // @var float $amount
+     *         $amount = $event->amount;
+     *
+     *         // Do something else if the refund amount’s >50% of the transaction
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_BEFORE_REFUND_TRANSACTION = 'beforeRefundTransaction';
 
     /**
-     * @event TransactionEvent The event that is triggered after a transaction is refunded
-     *
-     * Plugins can get notified after a transaction is refunded
+     * @event TransactionEvent The event that is triggered after a transaction is refunded.
      *
      * ```php
      * use craft\commerce\events\RefundTransactionEvent;
      * use craft\commerce\services\Payments;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_AFTER_REFUND_TRANSACTION, function(RefundTransactionEvent $e) {
-     *     // Do something - perhaps check if refund amount more than half the transaction and do something based on that
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_AFTER_REFUND_TRANSACTION,
+     *     function(RefundTransactionEvent $event) {
+     *         // @var float $amount
+     *         $amount = $event->amount;
+     *
+     *         // Do something else if the refund amount’s >50% of the transaction
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_AFTER_REFUND_TRANSACTION = 'afterRefundTransaction';
 
     /**
-     * @event ProcessPaymentEvent The event is triggered before a payment is being processed
-     * You may set [[ProcessPaymentEvent::isValid]] to `false` to prevent the payment from being processed
+     * @event ProcessPaymentEvent The event that is triggered before a payment is processed.
      *
-     * Plugins can get notified before a payment is being processed
+     * You may set the `isValid` property to `false` on the event to prevent the payment from being processed.
      *
      * ```php
      * use craft\commerce\events\ProcessPaymentEvent;
      * use craft\commerce\services\Payments;
+     * use craft\commerce\elements\Order;
+     * use craft\commerce\models\payments\BasePaymentForm;
+     * use craft\commerce\models\Transaction;
+     * use craft\commerce\base\RequestResponseInterface;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_BEFORE_PROCESS_PAYMENT_EVENT, function(ProcessPaymentEvent $e) {
-     *     // Do something - perhaps check if the transaction is allowed for the order based on some business rules.
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_BEFORE_PROCESS_PAYMENT,
+     *     function(ProcessPaymentEvent $event) {
+     *         // @var Order $order
+     *         $order = $event->order;
+     *         // @var BasePaymentForm $form
+     *         $form = $event->form;
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *         // @var RequestResponseInterface $response
+     *         $response = $event->response;
+     *
+     *         // Check some business rules to see whether the transaction is allowed
+     *         // ...
+     *     }
+     * );
      * ```
      */
-    const EVENT_BEFORE_PROCESS_PAYMENT_EVENT = 'beforeProcessPaymentEvent';
+    const EVENT_BEFORE_PROCESS_PAYMENT = 'beforeProcessPaymentEvent';
 
     /**
-     * @event ProcessPaymentEvent The event is triggered after a payment is being processed
-     *
-     * Plugins can get notified after a payment is processed
+     * @event ProcessPaymentEvent The event that is triggered after a payment is processed.
      *
      * ```php
      * use craft\commerce\events\ProcessPaymentEvent;
      * use craft\commerce\services\Payments;
+     * use craft\commerce\elements\Order;
+     * use craft\commerce\models\payments\BasePaymentForm;
+     * use craft\commerce\models\Transaction;
+     * use craft\commerce\base\RequestResponseInterface;
      * use yii\base\Event;
      *
-     * Event::on(Payments::class, Payments::EVENT_AFTER_PROCESS_PAYMENT_EVENT, function(ProcessPaymentEvent $e) {
-     *     // Do something - maybe let accounting dept. know that a transaction went through for an order.
-     * });
+     * Event::on(
+     *     Payments::class,
+     *     Payments::EVENT_AFTER_PROCESS_PAYMENT,
+     *     function(ProcessPaymentEvent $event) {
+     *         // @var Order $order
+     *         $order = $event->order;
+     *         // @var BasePaymentForm $form
+     *         $form = $event->form;
+     *         // @var Transaction $transaction
+     *         $transaction = $event->transaction;
+     *         // @var RequestResponseInterface $response
+     *         $response = $event->response;
+     *
+     *         // Let the accounting department know an order transaction went through
+     *         // ...
+     *     }
+     * );
      * ```
      */
-    const EVENT_AFTER_PROCESS_PAYMENT_EVENT = 'afterProcessPaymentEvent';
-
-    // Public Methods
-    // =========================================================================
+    const EVENT_AFTER_PROCESS_PAYMENT = 'afterProcessPaymentEvent';
 
     /**
      * Process a payment.
@@ -166,23 +232,21 @@ class Payments extends Component
      * @param BasePaymentForm $form the payment form.
      * @param string|null &$redirect a string parameter by reference that will contain the redirect URL, if any
      * @param Transaction|null &$transaction the transaction
+     * @return void|null
      * @throws PaymentException if the payment was unsuccessful
-     * @throws \Throwable if reasons
+     * @throws Throwable if reasons
      */
     public function processPayment(Order $order, BasePaymentForm $form, &$redirect, &$transaction)
     {
         // Raise the 'beforeProcessPaymentEvent' event
-        $event = new ProcessPaymentEvent([
-            'order' => $order,
-            'form' => $form
-        ]);
+        $event = new ProcessPaymentEvent(compact('order', 'form'));
 
-        $this->trigger(self::EVENT_BEFORE_PROCESS_PAYMENT_EVENT, $event);
+        $this->trigger(self::EVENT_BEFORE_PROCESS_PAYMENT, $event);
 
         if (!$event->isValid) {
             // This error potentially is going to be displayed in the frontend, so we have to be vague about it.
             // Long story short - a plugin said "no."
-            throw new PaymentException(Craft::t('commerce', 'Unable to make payment at this time.'));
+            throw new PaymentException(Plugin::t('Unable to make payment at this time.'));
         }
 
         // Order could have zero totalPrice and already considered 'paid'. Free orders complete immediately.
@@ -203,12 +267,10 @@ class Payments extends Component
 
         if ($defaultAction === TransactionRecord::TYPE_AUTHORIZE) {
             if (!$gateway->supportsAuthorize()) {
-                throw new PaymentException(Craft::t('commerce', 'Gateway doesn’t support authorize'));
+                throw new PaymentException(Plugin::t('Gateway doesn’t support authorize'));
             }
-        } else {
-            if (!$gateway->supportsPurchase()) {
-                throw new PaymentException(Craft::t('commerce', 'Gateway doesn’t support purchase'));
-            }
+        } else if (!$gateway->supportsPurchase()) {
+            throw new PaymentException(Plugin::t('Gateway doesn’t support purchase'));
         }
 
         //creating order, transaction and request
@@ -227,19 +289,14 @@ class Payments extends Component
 
             $this->_updateTransaction($transaction, $response);
 
-            if ($this->hasEventHandlers(self::EVENT_AFTER_PROCESS_PAYMENT_EVENT)) {
-                $this->trigger(self::EVENT_AFTER_PROCESS_PAYMENT_EVENT, new ProcessPaymentEvent([
-                    'order' => $order,
-                    'transaction' => $transaction,
-                    'form' => $form,
-                    'response' => $response
-                ]));
+            if ($this->hasEventHandlers(self::EVENT_AFTER_PROCESS_PAYMENT)) {
+                $this->trigger(self::EVENT_AFTER_PROCESS_PAYMENT, new ProcessPaymentEvent(compact('order', 'transaction', 'form', 'response')));
             }
 
             // For redirects or unsuccessful transactions, save the transaction before bailing
             if ($response->isRedirect()) {
                 $this->_handleRedirect($response, $redirect);
-                return;
+                return null;
             }
 
             if ($transaction->status !== TransactionRecord::STATUS_SUCCESS) {
@@ -248,7 +305,7 @@ class Payments extends Component
 
             // Success!
             $order->updateOrderPaidInformation();
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $transaction->status = TransactionRecord::STATUS_FAILED;
             $transaction->message = $e->getMessage();
 
@@ -291,7 +348,7 @@ class Payments extends Component
     }
 
     /**
-     * Regund a transcation.
+     * Refund a transaction.
      *
      * @param Transaction $transaction the transaction to refund.
      * @param float|null $amount the amount to refund or null for full amount.
@@ -303,20 +360,14 @@ class Payments extends Component
     {
         // Raise 'beforeRefundTransaction' event
         if ($this->hasEventHandlers(self::EVENT_BEFORE_REFUND_TRANSACTION)) {
-            $this->trigger(self::EVENT_BEFORE_REFUND_TRANSACTION, new RefundTransactionEvent([
-                'transaction' => $transaction,
-                'amount' => $amount
-            ]));
+            $this->trigger(self::EVENT_BEFORE_REFUND_TRANSACTION, new RefundTransactionEvent(compact('transaction', 'amount')));
         }
 
         $refundTransaction = $this->_refund($transaction, $amount, $note);
 
         /// Raise 'afterRefundTransaction' event
         if ($this->hasEventHandlers(self::EVENT_AFTER_REFUND_TRANSACTION)) {
-            $this->trigger(self::EVENT_AFTER_REFUND_TRANSACTION, new RefundTransactionEvent([
-                'transaction' => $transaction,
-                'amount' => $amount
-            ]));
+            $this->trigger(self::EVENT_AFTER_REFUND_TRANSACTION, new RefundTransactionEvent(compact('transaction', 'amount')));
         }
 
         return $refundTransaction;
@@ -338,8 +389,17 @@ class Payments extends Component
             return false;
         }
 
+        $transactionLockName = 'commerceTransaction:' . $transaction->hash;
+        $mutex = Craft::$app->getMutex();
+
+        if (!$mutex->acquire($transactionLockName, 5)) {
+            throw new \Exception('Unable to acquire a lock for transaction: ' . $transaction->hash);
+        }
+
         // If it's successful already, we're good.
         if (Plugin::getInstance()->getTransactions()->isTransactionSuccessful($transaction)) {
+            $transaction->order->updateOrderPaidInformation();
+            $mutex->release($transactionLockName);
             return true;
         }
 
@@ -354,6 +414,7 @@ class Payments extends Component
                 $response = $gateway->completeAuthorize($transaction);
                 break;
             default:
+                $mutex->release($transactionLockName);
                 return false;
         }
 
@@ -364,16 +425,18 @@ class Payments extends Component
         // 1) The transaction completed successfully with the gateway, and is now marked as complete.
         // 2) The result of the gateway request was successful but also got a redirect response. We now need to redirect if $redirect is not null.
         $success = $response->isSuccessful() || $response->isProcessing();
+        $isParentTransactionRedirect = ($transaction->status === TransactionRecord::STATUS_REDIRECT);
 
-        if ($success && $transaction->status === TransactionRecord::STATUS_SUCCESS) {
+        if ($success && ($transaction->status === TransactionRecord::STATUS_SUCCESS || ($isParentTransactionRedirect && $childTransaction->status == TransactionRecord::STATUS_SUCCESS))) {
             $transaction->order->updateOrderPaidInformation();
         }
 
-        if ($success && $transaction->status === TransactionRecord::STATUS_PROCESSING) {
+        if ($success && ($transaction->status === TransactionRecord::STATUS_PROCESSING || ($isParentTransactionRedirect && $childTransaction->status == TransactionRecord::STATUS_PROCESSING))) {
             $transaction->order->markAsComplete();
         }
 
         if ($response->isRedirect() && $transaction->status === TransactionRecord::STATUS_REDIRECT) {
+            $mutex->release($transactionLockName);
             $this->_handleRedirect($response, $redirect);
             Craft::$app->getResponse()->redirect($redirect);
             Craft::$app->end();
@@ -383,6 +446,8 @@ class Payments extends Component
             $customError = $response->getMessage();
         }
 
+        $mutex->release($transactionLockName);
+
         return $success;
     }
 
@@ -391,19 +456,13 @@ class Payments extends Component
      *
      * @param Order $order
      * @return float
+     * @deprecated 3.x Use
      */
     public function getTotalPaidForOrder(Order $order): float
     {
-        $paid = (float)(new Query())
-            ->from(['{{%commerce_transactions}}'])
-            ->where([
-                'orderId' => $order->id,
-                'status' => TransactionRecord::STATUS_SUCCESS,
-                'type' => [TransactionRecord::TYPE_PURCHASE, TransactionRecord::TYPE_CAPTURE]
-            ])
-            ->sum('amount');
+        Craft::$app->getDeprecator()->log('Payments::getTotalPaidForOrder()', 'Payments::getTotalPaidForOrder() has been deprecated. Use Order::getTotalPaid() instead.');
 
-        return $paid - $this->getTotalRefundedForOrder($order);
+        return $order->getTotalPaid();
     }
 
     /**
@@ -411,17 +470,18 @@ class Payments extends Component
      *
      * @param Order $order
      * @return float
+     * @deprecated 3.x
      */
     public function getTotalRefundedForOrder(Order $order): float
     {
-        return (float)(new Query())
-            ->from(['{{%commerce_transactions}}'])
-            ->where([
-                'orderId' => $order->id,
-                'status' => TransactionRecord::STATUS_SUCCESS,
-                'type' => [TransactionRecord::TYPE_REFUND]
-            ])
-            ->sum('amount');
+        Craft::$app->getDeprecator()->log('Payments::getTotalRefundedForOrder()', 'Payments::getTotalRefundedForOrder() has been deprecated.');
+
+        // Since this method was only used by getTotalPaidForOrder, we don't need to move this to the order model since the logic is inside Order::getTotalPaid()
+        $transactions = ArrayHelper::where($order->getTransactions(), static function(Transaction $transaction) {
+            return ($transaction->status == TransactionRecord::STATUS_SUCCESS && $transaction->type == TransactionRecord::TYPE_REFUND);
+        });
+
+        return array_sum(ArrayHelper::getColumn($transactions, 'amount', false));
     }
 
     /**
@@ -429,23 +489,36 @@ class Payments extends Component
      *
      * @param Order $order
      * @return float
+     * @deprecated 3.x
+     */
+    public function getTotalAuthorizedOnlyForOrder(Order $order): float
+    {
+        Craft::$app->getDeprecator()->log('Payments::getTotalAuthorizedOnlyForOrder()', 'Payments::getTotalAuthorizedOnlyForOrder() has been deprecated. Use Order::getTotalAuthorized()');
+
+        return $order->getTotalAuthorized();
+    }
+
+    /**
+     *
+     * @param Order $order
+     * @return float
+     * @deprecated 3.x
      */
     public function getTotalAuthorizedForOrder(Order $order): float
     {
-        $authorized = (float)(new Query())
-            ->from(['{{%commerce_transactions}}'])
+        // At time of deprecation this method has no internal uses.
+        Craft::$app->getDeprecator()->log('Payments::getTotalAuthorizedForOrder()', 'Payments::getTotalAuthorizedForOrder() has been deprecated. It is not an accurate result since it does not take the amount paid from the authorized. Use Order::getTotalAuthorized()');
+
+        return (float)(new Query())
+            ->from([Table::TRANSACTIONS])
             ->where([
                 'orderId' => $order->id,
                 'status' => TransactionRecord::STATUS_SUCCESS,
                 'type' => [TransactionRecord::TYPE_AUTHORIZE, TransactionRecord::TYPE_PURCHASE, TransactionRecord::TYPE_CAPTURE]
             ])
             ->sum('amount');
-
-        return $authorized - $this->getTotalRefundedForOrder($order);
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * Handles a redirect.
@@ -494,6 +567,8 @@ class Payments extends Component
 
             $response->redirect();
         }
+
+        return null;
     }
 
     /**
@@ -510,9 +585,9 @@ class Payments extends Component
         $gateway = $parent->getGateway();
 
         try {
-            $response = $gateway->capture($child, $parent->reference);
+            $response = $gateway->capture($child, (string)$parent->reference);
             $this->_updateTransaction($child, $response);
-        } catch (\Exception $e) {
+        } catch (Exception $e) {
             $child->status = TransactionRecord::STATUS_FAILED;
             $child->message = $e->getMessage();
             $this->_saveTransaction($child);
@@ -538,11 +613,11 @@ class Payments extends Component
             $gateway = $parent->getGateway();
 
             if (!$gateway->supportsRefund()) {
-                throw new SubscriptionException(Craft::t('commerce', 'Gateway doesn’t support refunds.'));
+                throw new SubscriptionException(Plugin::t('Gateway doesn’t support refunds.'));
             }
 
             if ($amount < $parent->paymentAmount && !$gateway->supportsPartialRefund()) {
-                throw new SubscriptionException(Craft::t('commerce', 'Gateway doesn’t support partial refunds.'));
+                throw new SubscriptionException(Plugin::t('Gateway doesn’t support partial refunds.'));
             }
 
             $child = Plugin::getInstance()->getTransactions()->createTransaction(null, $parent, TransactionRecord::TYPE_REFUND);
@@ -556,14 +631,15 @@ class Payments extends Component
             try {
                 $response = $gateway->refund($child);
                 $this->_updateTransaction($child, $response);
-            } catch (\Throwable $exception) {
+            } catch (Throwable $exception) {
+                Craft::error(Plugin::t('Error refunding transaction: {transactionHash}', ['transactionHash' => $parent->hash]), 'commerce');
                 $child->status = TransactionRecord::STATUS_FAILED;
                 $child->message = $exception->getMessage();
                 $this->_saveTransaction($child);
             }
 
             return $child;
-        } catch (\Throwable $exception) {
+        } catch (Throwable $exception) {
             throw new RefundException($exception->getMessage());
         }
     }
@@ -589,12 +665,12 @@ class Payments extends Component
      */
     private function _updateTransaction(Transaction $transaction, RequestResponseInterface $response)
     {
-        if ($response->isRedirect()) {
-            $transaction->status = TransactionRecord::STATUS_REDIRECT;
-        } elseif ($response->isSuccessful()) {
+        if ($response->isSuccessful()) {
             $transaction->status = TransactionRecord::STATUS_SUCCESS;
         } elseif ($response->isProcessing()) {
             $transaction->status = TransactionRecord::STATUS_PROCESSING;
+        } elseif ($response->isRedirect()) {
+            $transaction->status = TransactionRecord::STATUS_REDIRECT;
         } else {
             $transaction->status = TransactionRecord::STATUS_FAILED;
         }

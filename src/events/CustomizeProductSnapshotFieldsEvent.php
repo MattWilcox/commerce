@@ -7,6 +7,7 @@
 
 namespace craft\commerce\events;
 
+use craft\commerce\elements\Product;
 use yii\base\Event;
 
 /**
@@ -17,9 +18,6 @@ use yii\base\Event;
  */
 class CustomizeProductSnapshotFieldsEvent extends Event
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var Product The product
      */

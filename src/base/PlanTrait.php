@@ -7,6 +7,8 @@
 
 namespace craft\commerce\base;
 
+use DateTime;
+
 /**
  * Plan trait
  *
@@ -15,9 +17,6 @@ namespace craft\commerce\base;
  */
 trait PlanTrait
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int Plan ID
      */
@@ -59,7 +58,7 @@ trait PlanTrait
     public $isArchived;
 
     /**
-     * @var \DateTime when the plan was archived
+     * @var DateTime when the plan was archived
      */
     public $dateArchived;
 
@@ -72,4 +71,9 @@ trait PlanTrait
      * @var string plan uid
      */
     public $uid;
+
+    /**
+     * @var int sort order
+     */
+    public $sortOrder;
 }

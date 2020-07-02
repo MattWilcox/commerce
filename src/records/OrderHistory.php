@@ -7,7 +7,9 @@
 
 namespace craft\commerce\records;
 
+use craft\commerce\db\Table;
 use craft\db\ActiveRecord;
+use DateTime;
 use yii\db\ActiveQueryInterface;
 
 /**
@@ -15,7 +17,7 @@ use yii\db\ActiveQueryInterface;
  *
  * @property Customer $customer
  * @property int $customerId
- * @property \DateTime $dateCreated
+ * @property DateTime $dateCreated
  * @property int $id
  * @property string $message
  * @property OrderStatus $newStatus
@@ -29,15 +31,12 @@ use yii\db\ActiveQueryInterface;
  */
 class OrderHistory extends ActiveRecord
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public static function tableName(): string
     {
-        return '{{%commerce_orderhistories}}';
+        return Table::ORDERHISTORIES;
     }
 
     /**

@@ -23,6 +23,7 @@ use craft\validators\UniqueValidator;
  * @property string $description the element's title or any additional descriptive information
  * @property bool $isAvailable whether the purchasable is currently available for purchase
  * @property bool $isPromotable whether this purchasable can be subject to discounts or sales
+ * @property bool $onSale
  * @property int $purchasableId the ID of the Purchasable element that will be be added to the line item
  * @property float $promotionRelationSource The source for any promotion category relation
  * @property float $price the base price the item will be added to the line item with
@@ -31,6 +32,8 @@ use craft\validators\UniqueValidator;
  * @property int $shippingCategoryId the purchasable's shipping category ID
  * @property string $sku a unique code as per the commerce_purchasables table
  * @property array $snapshot
+ * @property bool $isShippable
+ * @property bool $isTaxable
  * @property int $taxCategoryId the purchasable's tax category ID
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
@@ -47,18 +50,6 @@ abstract class Purchasable extends Element implements PurchasableInterface
      */
     private $_sales;
 
-    // Public Methods
-    // =========================================================================
-
-    /**
-     * @deprecated as of 2.0
-     */
-    public function getPurchasableId()
-    {
-        Craft::$app->getDeprecator()->log('Purchasable::getPurchasableId()', 'The Purchasable::getPurchasableId() function has been deprecated. Use Purchasable::getId() instead.');
-
-        return $this->getId();
-    }
 
     /**
      * @inheritdoc
@@ -172,11 +163,25 @@ abstract class Purchasable extends Element implements PurchasableInterface
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function getIsAvailable(): bool
     {
-        $rules = parent::rules();
+        return true;
+    }
 
-        $rules[] = [['sku'], UniqueValidator::class, 'targetClass' => PurchasableRecord::class, 'targetAttribute' => ['sku']];
+    /**
+     * @inheritdoc
+     */
+    public function defineRules(): array
+    {
+        $rules = parent::defineRules();
+
+        $rules[] = [
+            ['sku'],
+            UniqueValidator::class,
+            'targetClass' => PurchasableRecord::class,
+            'caseInsensitive' => true,
+            'on' => self::SCENARIO_LIVE,
+        ];
 
         return $rules;
     }
@@ -194,6 +199,22 @@ abstract class Purchasable extends Element implements PurchasableInterface
     public function hasFreeShipping(): bool
     {
         return false;
+    }
+
+    /**
+     * @return bool
+     */
+    public function getIsShippable(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getIsTaxable(): bool
+    {
+        return true;
     }
 
     /**
@@ -219,11 +240,16 @@ abstract class Purchasable extends Element implements PurchasableInterface
      */
     public function afterSave(bool $isNew)
     {
-        $purchasable = PurchasableRecord::findOne($this->id) ?? new PurchasableRecord();
+        $purchasable = PurchasableRecord::findOne($this->id);
+
+        if (!$purchasable) {
+            $purchasable = new PurchasableRecord();
+        }
 
         $purchasable->sku = $this->getSku();
         $purchasable->price = $this->getPrice();
         $purchasable->id = $this->id;
+        $purchasable->description = $this->getDescription();
 
         $purchasable->save(false);
 
@@ -245,11 +271,19 @@ abstract class Purchasable extends Element implements PurchasableInterface
     }
 
     /**
-     * @return Sale[]
+     * @return Sale[] The sales that relate directly to this purchasable
      */
     public function relatedSales(): array
     {
         return Plugin::getInstance()->getSales()->getSalesRelatedToPurchasable($this);
+    }
+
+    /**
+     * @return bool
+     */
+    public function getOnSale(): bool
+    {
+        return null === $this->salePrice ? false : (Currency::round($this->salePrice) != Currency::round($this->price));
     }
 
     /**

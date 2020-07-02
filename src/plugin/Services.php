@@ -14,12 +14,13 @@ use craft\commerce\services\Currencies;
 use craft\commerce\services\Customers;
 use craft\commerce\services\Discounts;
 use craft\commerce\services\Emails;
+use craft\commerce\services\Formulas;
 use craft\commerce\services\Gateways;
 use craft\commerce\services\LineItems;
+use craft\commerce\services\LineItemStatuses;
 use craft\commerce\services\OrderAdjustments;
 use craft\commerce\services\OrderHistories;
 use craft\commerce\services\Orders;
-use craft\commerce\services\OrderSettings;
 use craft\commerce\services\OrderStatuses;
 use craft\commerce\services\PaymentCurrencies;
 use craft\commerce\services\Payments;
@@ -39,10 +40,12 @@ use craft\commerce\services\ShippingZones;
 use craft\commerce\services\States;
 use craft\commerce\services\Subscriptions;
 use craft\commerce\services\TaxCategories;
+use craft\commerce\services\Taxes;
 use craft\commerce\services\TaxRates;
 use craft\commerce\services\TaxZones;
 use craft\commerce\services\Transactions;
 use craft\commerce\services\Variants;
+use craft\commerce\services\Webhooks;
 
 /**
  * Trait Services
@@ -59,7 +62,6 @@ use craft\commerce\services\Variants;
  * @property OrderAdjustments $orderAdjustments the orderAdjustments service
  * @property OrderHistories $orderHistories the orderHistories service
  * @property Orders $orders the orders service
- * @property OrderSettings $orderSettings the orderSettings service
  * @property OrderStatuses $orderStatuses the orderStatuses service
  * @property PaymentCurrencies $paymentCurrencies the paymentCurrencies service
  * @property Payments $payments the payments service
@@ -87,9 +89,6 @@ use craft\commerce\services\Variants;
  */
 trait Services
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * Returns the address service
      *
@@ -161,6 +160,17 @@ trait Services
     }
 
     /**
+     * Returns the formulas service
+     *
+     * @return Formulas the formulas service
+     * @since 2.2
+     */
+    public function getFormulas(): Formulas
+    {
+        return $this->get('formulas');
+    }
+
+    /**
      * Returns the gateways service
      *
      * @return Gateways The gateways service
@@ -178,6 +188,16 @@ trait Services
     public function getLineItems(): LineItems
     {
         return $this->get('lineItems');
+    }
+
+    /**
+     * Returns the lineItems statuses service
+     *
+     * @return LineItemStatuses The lineItems service
+     */
+    public function getLineItemStatuses(): LineItemStatuses
+    {
+        return $this->get('lineItemStatuses');
     }
 
     /**
@@ -208,16 +228,6 @@ trait Services
     public function getOrders(): Orders
     {
         return $this->get('orders');
-    }
-
-    /**
-     * Returns the orderSettings service
-     *
-     * @return OrderSettings The orderSettings service
-     */
-    public function getOrderSettings(): OrderSettings
-    {
-        return $this->get('orderSettings');
     }
 
     /**
@@ -311,16 +321,6 @@ trait Services
     }
 
     /**
-     * Returns the reporting service
-     *
-     * @return Reports The reports service
-     */
-    public function getReports(): Reports
-    {
-        return $this->get('reports');
-    }
-
-    /**
      * Returns the sales service
      *
      * @return Sales The sales service
@@ -401,6 +401,16 @@ trait Services
     }
 
     /**
+     * Returns the taxes service
+     *
+     * @return Taxes The taxes service
+     */
+    public function getTaxes(): Taxes
+    {
+        return $this->get('taxes');
+    }
+
+    /**
      * Returns the taxCategories service
      *
      * @return TaxCategories The taxCategories service
@@ -450,8 +460,17 @@ trait Services
         return $this->get('variants');
     }
 
-    // Private Methods
-    // =========================================================================
+    /**
+     * Returns the webhooks service
+     *
+     * @return Webhooks The variants service
+     * @since 3.1.9
+     */
+    public function getWebhooks(): Webhooks
+    {
+        return $this->get('webhooks');
+    }
+
 
     /**
      * Sets the components of the commerce plugin
@@ -459,43 +478,123 @@ trait Services
     private function _setPluginComponents()
     {
         $this->setComponents([
-            'addresses' => Addresses::class,
-            'carts' => Carts::class,
-            'countries' => Countries::class,
-            'currencies' => Currencies::class,
-            'customers' => Customers::class,
-            'discounts' => Discounts::class,
-            'emails' => Emails::class,
-            'gateways' => Gateways::class,
-            'lineItems' => LineItems::class,
-            'orderAdjustments' => OrderAdjustments::class,
-            'orderHistories' => OrderHistories::class,
-            'orders' => Orders::class,
-            'orderSettings' => OrderSettings::class,
-            'orderStatuses' => OrderStatuses::class,
-            'paymentMethods' => Gateways::class,
-            'paymentCurrencies' => PaymentCurrencies::class,
-            'payments' => Payments::class,
-            'paymentSources' => PaymentSources::class,
-            'pdf' => Pdf::class,
-            'plans' => Plans::class,
-            'products' => Products::class,
-            'productTypes' => ProductTypes::class,
-            'purchasables' => Purchasables::class,
-            'reports' => Reports::class,
-            'sales' => Sales::class,
-            'shippingMethods' => ShippingMethods::class,
-            'shippingRules' => ShippingRules::class,
-            'shippingRuleCategories' => ShippingRuleCategories::class,
-            'shippingCategories' => ShippingCategories::class,
-            'shippingZones' => ShippingZones::class,
-            'states' => States::class,
-            'subscriptions' => Subscriptions::class,
-            'taxCategories' => TaxCategories::class,
-            'taxRates' => TaxRates::class,
-            'taxZones' => TaxZones::class,
-            'transactions' => Transactions::class,
-            'variants' => Variants::class
+            'addresses' => [
+                'class' => Addresses::class,
+            ],
+            'carts' => [
+                'class' => Carts::class,
+            ],
+            'countries' => [
+                'class' => Countries::class,
+            ],
+            'currencies' => [
+                'class' => Currencies::class,
+            ],
+            'customers' => [
+                'class' => Customers::class,
+            ],
+            'discounts' => [
+                'class' => Discounts::class,
+            ],
+            'emails' => [
+                'class' => Emails::class,
+            ],
+            'formulas' => [
+                'class' => Formulas::class,
+            ],
+            'gateways' => [
+                'class' => Gateways::class,
+            ],
+            'lineItems' => [
+                'class' => LineItems::class,
+            ],
+            'lineItemStatuses' => [
+                'class' => LineItemStatuses::class,
+            ],
+            'orderAdjustments' => [
+                'class' => OrderAdjustments::class,
+            ],
+            'orderHistories' => [
+                'class' => OrderHistories::class,
+            ],
+            'orders' => [
+                'class' => Orders::class,
+            ],
+            'orderStatuses' => [
+                'class' => OrderStatuses::class,
+            ],
+            'paymentMethods' => [
+                'class' => Gateways::class,
+            ],
+            'paymentCurrencies' => [
+                'class' => PaymentCurrencies::class,
+            ],
+            'payments' => [
+                'class' => Payments::class,
+            ],
+            'paymentSources' => [
+                'class' => PaymentSources::class,
+            ],
+            'pdf' => [
+                'class' => Pdf::class,
+            ],
+            'plans' => [
+                'class' => Plans::class,
+            ],
+            'products' => [
+                'class' => Products::class,
+            ],
+            'productTypes' => [
+                'class' => ProductTypes::class,
+            ],
+            'purchasables' => [
+                'class' => Purchasables::class,
+            ],
+            'sales' => [
+                'class' => Sales::class,
+            ],
+            'shippingMethods' => [
+                'class' => ShippingMethods::class,
+            ],
+            'shippingRules' => [
+                'class' => ShippingRules::class,
+            ],
+            'shippingRuleCategories' => [
+                'class' => ShippingRuleCategories::class,
+            ],
+            'shippingCategories' => [
+                'class' => ShippingCategories::class,
+            ],
+            'shippingZones' => [
+                'class' => ShippingZones::class,
+            ],
+            'states' => [
+                'class' => States::class,
+            ],
+            'subscriptions' => [
+                'class' => Subscriptions::class,
+            ],
+            'taxCategories' => [
+                'class' => TaxCategories::class,
+            ],
+            'taxes' => [
+                'class' => Taxes::class,
+            ],
+            'taxRates' => [
+                'class' => TaxRates::class,
+            ],
+            'taxZones' => [
+                'class' => TaxZones::class,
+            ],
+            'transactions' => [
+                'class' => Transactions::class,
+            ],
+            'variants' => [
+                'class' => Variants::class,
+            ],
+            'webhooks' => [
+                'class' => Webhooks::class,
+            ],
         ]);
     }
 }

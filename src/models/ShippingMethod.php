@@ -8,12 +8,12 @@
 namespace craft\commerce\models;
 
 use Craft;
-use craft\commerce\base\Model;
-use craft\commerce\base\ShippingMethodInterface;
+use craft\commerce\base\ShippingMethod as BaseShippingMethod;
 use craft\commerce\Plugin;
 use craft\commerce\records\ShippingMethod as ShippingMethodRecord;
 use craft\helpers\UrlHelper;
 use craft\validators\UniqueValidator;
+use yii\behaviors\AttributeTypecastBehavior;
 
 /**
  * Shipping method model.
@@ -25,40 +25,32 @@ use craft\validators\UniqueValidator;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
-class ShippingMethod extends Model implements ShippingMethodInterface
+class ShippingMethod extends BaseShippingMethod
 {
-    // Properties
-    // =========================================================================
+    public function behaviors(): array
+    {
+        $behaviors = parent::behaviors();
 
-    /**
-     * @var int ID
-     */
-    public $id;
+        $behaviors['typecast'] = [
+            'class' => AttributeTypecastBehavior::className(),
+            'attributeTypes' => [
+                'id' => AttributeTypecastBehavior::TYPE_INTEGER,
+                'name' => AttributeTypecastBehavior::TYPE_STRING,
+                'handle' => AttributeTypecastBehavior::TYPE_STRING,
+                'enabled' => AttributeTypecastBehavior::TYPE_BOOLEAN,
+                'isLite' => AttributeTypecastBehavior::TYPE_BOOLEAN
+            ]
+        ];
 
-    /**
-     * @var string Name
-     */
-    public $name;
-
-    /**
-     * @var string Handle
-     */
-    public $handle;
-
-    /**
-     * @var bool Enabled
-     */
-    public $enabled;
-
-    // Public Methods
-    // =========================================================================
+        return $behaviors;
+    }
 
     /**
      * @inheritdoc
      */
     public function getType(): string
     {
-        return Craft::t('commerce', 'Custom');
+        return Plugin::t('Custom');
     }
 
     /**
@@ -106,18 +98,20 @@ class ShippingMethod extends Model implements ShippingMethodInterface
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/shippingmethods/' . $this->id);
+        return UrlHelper::cpUrl('commerce/shipping/shippingmethods/' . $this->id);
     }
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['name', 'handle'], 'required'],
-            [['name'], UniqueValidator::class, 'targetClass' => ShippingMethodRecord::class],
-            [['handle'], UniqueValidator::class, 'targetClass' => ShippingMethodRecord::class]
-        ];
+        $rules = parent::defineRules();
+
+        $rules[] = [['name', 'handle'], 'required'];
+        $rules[] = [['name'], UniqueValidator::class, 'targetClass' => ShippingMethodRecord::class];
+        $rules[] = [['handle'], UniqueValidator::class, 'targetClass' => ShippingMethodRecord::class];
+
+        return $rules;
     }
 }

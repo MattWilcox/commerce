@@ -11,6 +11,7 @@ use Craft;
 use craft\commerce\base\Gateway;
 use craft\commerce\base\GatewayInterface;
 use craft\commerce\base\PurchasableInterface;
+use craft\commerce\db\Table;
 use craft\commerce\elements\Order;
 use craft\commerce\models\Customer;
 use craft\commerce\models\OrderStatus;
@@ -18,10 +19,10 @@ use craft\commerce\Plugin;
 use craft\db\Query;
 use craft\elements\db\ElementQuery;
 use craft\elements\User;
-use craft\helpers\ArrayHelper;
 use craft\helpers\Db;
-use DateTime;
 use yii\db\Connection;
+use yii\db\Expression;
+use yii\db\Schema;
 
 /**
  * OrderQuery represents a SELECT SQL statement for orders in a way that is independent of DBMS.
@@ -39,16 +40,19 @@ use yii\db\Connection;
  */
 class OrderQuery extends ElementQuery
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var string The order number of the resulting order.
      */
     public $number;
 
     /**
+     * @var string The short order number of the resulting order.
+     */
+    public $shortNumber;
+
+    /**
      * @var string The order reference of the resulting order.
+     * @used-by reference()
      */
     public $reference;
 
@@ -73,14 +77,24 @@ class OrderQuery extends ElementQuery
     public $expiryDate;
 
     /**
-     * @var mixed The date the order was paid.
+     * @var mixed The date the order was paid in full.
      */
     public $datePaid;
+
+    /**
+     * @var mixed The date the order was authorized in full.
+     */
+    public $dateAuthorized;
 
     /**
      * @var int The Order Status ID that the resulting orders must have.
      */
     public $orderStatusId;
+
+    /**
+     * @var string|null The origin the resulting orders must have.
+     */
+    public $origin;
 
     /**
      * @var bool The completion status that the resulting orders must have.
@@ -98,7 +112,7 @@ class OrderQuery extends ElementQuery
     public $isPaid;
 
     /**
-     * @var bool The payment status the resulting orders must belong to.
+     * @var bool Whether the order is unpaid
      */
     public $isUnpaid;
 
@@ -112,8 +126,15 @@ class OrderQuery extends ElementQuery
      */
     public $hasTransactions;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var bool Whether the order has any line items.
+     */
+    public $hasLineItems;
+
+    /**
+     * @inheritdoc
+     */
+    protected $defaultOrderBy = ['commerce_orders.id' => SORT_ASC];
 
     /**
      * @inheritdoc
@@ -126,23 +147,6 @@ class OrderQuery extends ElementQuery
         }
 
         parent::__construct($elementType, $config);
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function __set($name, $value)
-    {
-        switch ($name) {
-            case 'updatedAfter':
-                $this->updatedAfter($value);
-                break;
-            case 'updatedBefore':
-                $this->updatedBefore($value);
-                break;
-            default:
-                parent::__set($name, $value);
-        }
     }
 
     /**
@@ -172,12 +176,49 @@ class OrderQuery extends ElementQuery
      *     ->one();
      * ```
      *
-     * @param string|null $value The property value
+     * @param string|array|null $value The property value.
      * @return static self reference
      */
-    public function number(string $value = null)
+    public function number($value = null)
     {
         $this->number = $value;
+        return $this;
+    }
+
+    /**
+     * Narrows the query results based on the order short number.
+     *
+     * Possible values include:
+     *
+     * | Value | Fetches {elements}…
+     * | - | -
+     * | `'xxxxxxx'` | with a matching order number
+     *
+     * ---
+     *
+     * ```twig
+     * {# Fetch the requested {element} #}
+     * {% set orderNumber = craft.app.request.getQueryParam('shortNumber') %}
+     * {% set {element-var} = {twig-method}
+     *     .shortNumber(orderNumber)
+     *     .one() %}
+     * ```
+     *
+     * ```php
+     * // Fetch the requested {element}
+     * $orderNumber = Craft::$app->request->getQueryParam('shortNumber');
+     * ${element-var} = {php-method}
+     *     ->shortNumber($orderNumber)
+     *     ->one();
+     * ```
+     *
+     * @param string|array|null $value The property value.
+     * @return static self reference
+     * @since 2.2
+     */
+    public function shortNumber($value = null)
+    {
+        $this->shortNumber = $value;
         return $this;
     }
 
@@ -247,7 +288,7 @@ class OrderQuery extends ElementQuery
      * @param string|string[]|null $value The property value
      * @return static self reference
      */
-    public function email(string $value)
+    public function email($value)
     {
         $this->email = $value;
         return $this;
@@ -299,7 +340,7 @@ class OrderQuery extends ElementQuery
      * {% set aWeekAgo = date('7 days ago')|atom %}
      *
      * {% set {elements-var} = {twig-method}
-     *     .dateCompleted(">= #{aWeekAgo}")
+     *     .dateOrdered(">= #{aWeekAgo}")
      *     .all() %}
      * ```
      *
@@ -308,7 +349,7 @@ class OrderQuery extends ElementQuery
      * $aWeekAgo = new \DateTime('7 days ago')->format(\DateTime::ATOM);
      *
      * ${elements-var} = {php-method}
-     *     ->dateCompleted(">= {$aWeekAgo}")
+     *     ->dateOrdered(">= {$aWeekAgo}")
      *     ->all();
      * ```
      *
@@ -362,6 +403,46 @@ class OrderQuery extends ElementQuery
     }
 
     /**
+     * Narrows the query results based on the orders’ authorized dates.
+     *
+     * Possible values include:
+     *
+     * | Value | Fetches {elements}…
+     * | - | -
+     * | `'>= 2018-04-01'` | that were authorized on or after 2018-04-01.
+     * | `'< 2018-05-01'` | that were authorized before 2018-05-01
+     * | `['and', '>= 2018-04-04', '< 2018-05-01']` | that were completed between 2018-04-01 and 2018-05-01.
+     *
+     * ---
+     *
+     * ```twig
+     * {# Fetch {elements} that were authorized recently #}
+     * {% set aWeekAgo = date('7 days ago')|atom %}
+     *
+     * {% set {elements-var} = {twig-method}
+     *     .dateAuthorized(">= #{aWeekAgo}")
+     *     .all() %}
+     * ```
+     *
+     * ```php
+     * // Fetch {elements} that were authorized recently
+     * $aWeekAgo = new \DateTime('7 days ago')->format(\DateTime::ATOM);
+     *
+     * ${elements-var} = {php-method}
+     *     ->dateAuthorized(">= {$aWeekAgo}")
+     *     ->all();
+     * ```
+     *
+     * @param mixed $value The property value
+     * @return static self reference
+     */
+    public function dateAuthorized($value)
+    {
+        $this->dateAuthorized = $value;
+        return $this;
+    }
+
+    /**
      * Narrows the query results based on the orders’ expiry dates.
      *
      * Possible values include:
@@ -398,48 +479,6 @@ class OrderQuery extends ElementQuery
     public function expiryDate($value)
     {
         $this->expiryDate = $value;
-        return $this;
-    }
-
-    /**
-     * Narrows the query results based on the {elements}’ last-updated dates.
-     *
-     * @param string|DateTime $value The property value
-     * @return static self reference
-     * @deprecated in 2.0. Use [[dateUpdated()]] instead.
-     */
-    public function updatedAfter($value)
-    {
-        Craft::$app->getDeprecator()->log(__METHOD__, __METHOD__ . ' is deprecated. Use dateUpdated() instead.');
-
-        if ($value instanceof DateTime) {
-            $value = $value->format(DateTime::W3C);
-        }
-
-        $this->dateUpdated = ArrayHelper::toArray($this->dateUpdated);
-        $this->dateUpdated[] = '>=' . $value;
-
-        return $this;
-    }
-
-    /**
-     * Narrows the query results based on the {elements}’ last-updated dates.
-     *
-     * @param string|DateTime $value The property value
-     * @return static self reference
-     * @deprecated in 2.0. Use [[dateUpdated()]] instead.
-     */
-    public function updatedBefore($value)
-    {
-        Craft::$app->getDeprecator()->log(__METHOD__, __METHOD__ . ' is deprecated. Use dateUpdated() instead.');
-
-        if ($value instanceof DateTime) {
-            $value = $value->format(DateTime::W3C);
-        }
-
-        $this->dateUpdated = ArrayHelper::toArray($this->dateUpdated);
-        $this->dateUpdated[] = '<' . $value;
-
         return $this;
     }
 
@@ -482,7 +521,7 @@ class OrderQuery extends ElementQuery
         } else if ($value !== null) {
             $this->orderStatusId = (new Query())
                 ->select(['id'])
-                ->from(['{{%commerce_orderstatuses}}'])
+                ->from([Table::ORDERSTATUSES])
                 ->where(Db::parseParam('handle', $value))
                 ->column();
         } else {
@@ -526,6 +565,44 @@ class OrderQuery extends ElementQuery
     public function orderStatusId($value)
     {
         $this->orderStatusId = $value;
+        return $this;
+    }
+
+    /**
+     * Narrows the query results based on the origin.
+     *
+     * Possible values include:
+     *
+     * | Value | Fetches {elements}…
+     * | - | -
+     * | `'web'` | with an origin of `web`.
+     * | `'not remote'` | not with an origin of `remote`.
+     * | `['web', 'cp']` | with an order origin of `web` or `cp`.
+     * | `['not', 'remote', 'cp']` | not with an origin of `web` or `cp`.
+     *
+     * ---
+     *
+     * ```twig
+     * {# Fetch shipped {elements} #}
+     * {% set {elements-var} = {twig-method}
+     *     .origin('web')
+     *     .all() %}
+     * ```
+     *
+     * ```php
+     * // Fetch shipped {elements}
+     * ${elements-var} = {php-method}
+     *     ->origin('web')
+     *     ->all();
+     * ```
+     *
+     * @param string|string[]|null $value The property value
+     * @return static self reference
+     */
+    public function origin($value = null)
+    {
+        $this->origin = $value;
+
         return $this;
     }
 
@@ -754,6 +831,34 @@ class OrderQuery extends ElementQuery
     }
 
     /**
+     * Narrows the query results to only orders that have line items.
+     *
+     * ---
+     *
+     * ```twig
+     * {# Fetch orders that do or do not have line items #}
+     * {% set {elements-var} = {twig-function}
+     *     .hasLineItems()
+     *     .all() %}
+     * ```
+     *
+     * ```php
+     * // Fetch unpaid orders
+     * ${elements-var} = {element-class}::find()
+     *     ->hasLineItems()
+     *     ->all();
+     * ```
+     *
+     * @param bool $value The property value
+     * @return static self reference
+     */
+    public function hasLineItems(bool $value = true)
+    {
+        $this->hasLineItems = $value;
+        return $this;
+    }
+
+    /**
      * Narrows the query results to only carts that have at least one transaction.
      *
      * ---
@@ -801,9 +906,6 @@ class OrderQuery extends ElementQuery
         return $this;
     }
 
-    // Protected Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
@@ -830,15 +932,71 @@ class OrderQuery extends ElementQuery
             'commerce_orders.cancelUrl',
             'commerce_orders.billingAddressId',
             'commerce_orders.shippingAddressId',
+            'commerce_orders.estimatedBillingAddressId',
+            'commerce_orders.estimatedShippingAddressId',
             'commerce_orders.shippingMethodHandle',
             'commerce_orders.gatewayId',
             'commerce_orders.paymentSourceId',
             'commerce_orders.customerId',
-            'commerce_orders.dateUpdated'
+            'commerce_orders.dateUpdated',
         ]);
 
-        if ($this->number) {
+        // Join shipping and billing address
+        $this->query->leftJoin(Table::ADDRESSES . ' billing_address', '[[billing_address.id]] = [[commerce_orders.billingAddressId]]');
+        $this->subQuery->leftJoin(Table::ADDRESSES . ' billing_address', '[[billing_address.id]] = [[commerce_orders.billingAddressId]]');
+        $this->query->leftJoin(Table::ADDRESSES . ' shipping_address', '[[shipping_address.id]] = [[commerce_orders.shippingAddressId]]');
+        $this->subQuery->leftJoin(Table::ADDRESSES . ' shipping_address', '[[shipping_address.id]] = [[commerce_orders.shippingAddressId]]');
+
+        // TODO: remove after next breakpoint
+        $commerce = Craft::$app->getPlugins()->getStoredPluginInfo('commerce');
+
+        if ($commerce && version_compare($commerce['version'], '2.1.3', '>=')) {
+            $this->query->addSelect(['commerce_orders.registerUserOnOrderComplete']);
+        }
+
+        if ($commerce && version_compare($commerce['version'], '3.0', '>=')) {
+            $this->query->addSelect(['commerce_orders.recalculationMode']);
+            $this->query->addSelect(['commerce_orders.origin']);
+
+            if ($this->origin) {
+                $this->subQuery->andWhere(Db::parseParam('commerce_orders.origin', $this->origin));
+            }
+        }
+
+        if ($commerce && version_compare($commerce['version'], '3.0.6', '>=')) {
+            $this->query->addSelect(['commerce_orders.dateAuthorized']);
+            if ($this->dateAuthorized) {
+                $this->subQuery->andWhere(Db::parseDateParam('commerce_orders.dateAuthorized', $this->datePaid));
+            }
+        }
+
+        if ($commerce && version_compare($commerce['version'], '3.0.7', '>=')) {
+            $this->query->addSelect([
+                'storedTotalPrice' => 'commerce_orders.totalPrice',
+                'storedTotalPaid' => 'commerce_orders.totalPaid',
+                'storedItemTotal' => 'commerce_orders.itemTotal',
+                'storedTotalDiscount' => 'commerce_orders.totalDiscount',
+                'storedTotalShippingCost' => 'commerce_orders.totalShippingCost',
+                'storedTotalTax' => 'commerce_orders.totalTax',
+                'storedTotalTaxIncluded' => 'commerce_orders.totalTaxIncluded',
+            ]);
+        }
+
+        if ($this->number !== null) {
+            // If it's set to anything besides a non-empty string, abort the query
+            if (!is_string($this->number) || $this->number === '') {
+                return false;
+            }
             $this->subQuery->andWhere(['commerce_orders.number' => $this->number]);
+        }
+
+        if ($this->shortNumber !== null) {
+            // If it's set to anything besides a non-empty string, abort the query
+            if (!is_string($this->shortNumber) || $this->shortNumber === '') {
+                return false;
+            }
+
+            $this->subQuery->andWhere(new Expression('LEFT([[commerce_orders.number]], 7) = :shortNumber', [':shortNumber' => $this->shortNumber]));
         }
 
         if ($this->reference) {
@@ -849,8 +1007,9 @@ class OrderQuery extends ElementQuery
             $this->subQuery->andWhere(Db::parseParam('commerce_orders.email', $this->email));
         }
 
-        if ($this->isCompleted) {
-            $this->subQuery->andWhere(Db::parseParam('commerce_orders.isCompleted', $this->isCompleted));
+        // Allow true ot false but not null
+        if ($this->isCompleted !== null) {
+            $this->subQuery->andWhere(Db::parseParam('commerce_orders.isCompleted', $this->isCompleted, '=', false, Schema::TYPE_BOOLEAN));
         }
 
         if ($this->dateOrdered) {
@@ -865,10 +1024,6 @@ class OrderQuery extends ElementQuery
             $this->subQuery->andWhere(Db::parseDateParam('commerce_orders.expiryDate', $this->expiryDate));
         }
 
-        if ($this->dateUpdated) {
-            $this->subQuery->andWhere(Db::parseDateParam('commerce_orders.dateUpdated', $this->dateUpdated));
-        }
-
         if ($this->orderStatusId) {
             $this->subQuery->andWhere(Db::parseParam('commerce_orders.orderStatusId', $this->orderStatusId));
         }
@@ -881,15 +1036,18 @@ class OrderQuery extends ElementQuery
             $this->subQuery->andWhere(Db::parseParam('commerce_orders.gatewayId', $this->gatewayId));
         }
 
-        if ($this->isPaid) {
-            $this->subQuery->andWhere(Db::parseParam('commerce_orders.totalPaid', '>= commerce_orders.totalPrice'));
+        // Allow true ot false but not null
+        if (($this->isPaid !== null) && $this->isPaid) {
+            $this->subQuery->andWhere(new Expression('[[commerce_orders.totalPaid]] >= [[commerce_orders.totalPrice]]'));
         }
 
-        if ($this->isUnpaid) {
-            $this->subQuery->andWhere(Db::parseParam('commerce_orders.totalPaid', '< commerce_orders.totalPrice'));
+        // Allow true or false but not null
+        if (($this->isUnpaid !== null) && $this->isUnpaid) {
+            $this->subQuery->andWhere(new Expression('[[commerce_orders.totalPaid]] < [[commerce_orders.totalPrice]]'));
         }
 
-        if ($this->hasPurchasables) {
+        // Allow true ot false but not null
+        if (($this->hasPurchasables !== null) && $this->hasPurchasables) {
             $purchasableIds = [];
 
             if (!is_array($this->hasPurchasables)) {
@@ -907,12 +1065,20 @@ class OrderQuery extends ElementQuery
             // Remove any blank purchasable IDs (if any)
             $purchasableIds = array_filter($purchasableIds);
 
-            $this->subQuery->innerJoin('{{%commerce_lineitems}} lineitems', '[[lineitems.orderId]] = [[commerce_orders.id]]');
-            $this->subQuery->andWhere(['in', '[[lineitems.purchasableId]]', $purchasableIds]);
+            $this->subQuery->innerJoin(Table::LINEITEMS . ' lineitems', '[[lineitems.orderId]] = [[commerce_orders.id]]');
+            $this->subQuery->andWhere(['lineitems.purchasableId' => $purchasableIds]);
         }
 
-        if ($this->hasTransactions) {
-            $this->subQuery->innerJoin('{{%commerce_transactions}} transactions', '[[commerce_orders.id]] = [[transactions.orderId]]');
+        // Allow true or false but not null
+        if (($this->hasTransactions !== null) && $this->hasTransactions) {
+            $this->subQuery->leftJoin(Table::TRANSACTIONS . ' transactions', '[[transactions.orderId]] = [[commerce_orders.id]]');
+            $this->subQuery->andWhere(['not', ['transactions.id' => null]]);
+        }
+
+        // Allow true or false but not null
+        if (($this->hasLineItems !== null) && $this->hasLineItems) {
+            $this->subQuery->leftJoin(Table::LINEITEMS . ' lineItems', '[[lineItems.orderId]] = [[commerce_orders.id]]');
+            $this->subQuery->andWhere(['not', ['lineItems.id' => null]]);
         }
 
         return parent::beforePrepare();

@@ -8,9 +8,14 @@
 namespace craft\commerce\services;
 
 use Craft;
+use craft\commerce\db\Table;
+use craft\commerce\elements\Product;
 use craft\commerce\models\ShippingCategory;
+use craft\commerce\Plugin;
 use craft\commerce\records\ShippingCategory as ShippingCategoryRecord;
 use craft\db\Query;
+use craft\helpers\ArrayHelper;
+use craft\queue\jobs\ResaveElements;
 use yii\base\Component;
 use yii\base\Exception;
 
@@ -24,9 +29,6 @@ use yii\base\Exception;
  */
 class ShippingCategories extends Component
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var bool
      */
@@ -47,8 +49,6 @@ class ShippingCategories extends Component
      */
     private $_defaultShippingCategory;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns all Shipping Categories
@@ -70,6 +70,19 @@ class ShippingCategories extends Component
 
         return $this->_shippingCategoriesById;
     }
+
+    /**
+     * Returns all Shipping category names, by ID.
+     *
+     * @return array
+     */
+    public function getAllShippingCategoriesAsList(): array
+    {
+        $categories = $this->getAllShippingCategories();
+
+        return ArrayHelper::map($categories, 'id', 'name');
+    }
+
 
     /**
      * Get a shipping category by its ID.
@@ -141,7 +154,7 @@ class ShippingCategories extends Component
         }
 
         $row = $this->_createShippingCategoryQuery()
-            ->where(['default' => 1])
+            ->where(['default' => true])
             ->one();
 
         if (!$row) {
@@ -152,22 +165,22 @@ class ShippingCategories extends Component
     }
 
     /**
-     * @param ShippingCategory $model
+     * @param ShippingCategory $shippingCategory
      * @param bool $runValidation should we validate this before saving.
      * @return bool
      * @throws Exception
      * @throws \Exception
      */
-    public function saveShippingCategory(ShippingCategory $model, bool $runValidation = true): bool
+    public function saveShippingCategory(ShippingCategory $shippingCategory, bool $runValidation = true): bool
     {
         $oldHandle = null;
 
-        if ($model->id) {
-            $record = ShippingCategoryRecord::findOne($model->id);
+        if ($shippingCategory->id) {
+            $record = ShippingCategoryRecord::findOne($shippingCategory->id);
 
             if (!$record) {
-                throw new Exception(Craft::t('commerce', 'No shipping category exists with the ID “{id}”',
-                    ['id' => $model->id]));
+                throw new Exception(Plugin::t( 'No shipping category exists with the ID “{id}”',
+                    ['id' => $shippingCategory->id]));
             }
 
             $oldHandle = $record->handle;
@@ -175,34 +188,71 @@ class ShippingCategories extends Component
             $record = new ShippingCategoryRecord();
         }
 
-        if ($runValidation && !$model->validate()) {
+        if ($runValidation && !$shippingCategory->validate()) {
             Craft::info('Shipping category not saved due to validation error.', __METHOD__);
 
             return false;
         }
 
-        $record->name = $model->name;
-        $record->handle = $model->handle;
-        $record->description = $model->description;
-        $record->default = $model->default;
+        $record->name = $shippingCategory->name;
+        $record->handle = $shippingCategory->handle;
+        $record->description = $shippingCategory->description;
+        $record->default = $shippingCategory->default;
 
         // Save it!
         $record->save(false);
 
         // Now that we have a record ID, save it on the model
-        $model->id = $record->id;
+        $shippingCategory->id = $record->id;
 
         // If this was the default make all others not the default.
-        if ($model->default) {
-            ShippingCategoryRecord::updateAll(['default' => 0], ['not', ['id' => $record->id]]);
+        if ($shippingCategory->default) {
+            ShippingCategoryRecord::updateAll(['default' => false], ['not', ['id' => $record->id]]);
+        }
+
+        // Product type IDs this shipping category is available to
+        $currentProductTypeIds = (new Query())
+            ->select(['productTypeId'])
+            ->from([Table::PRODUCTTYPES_SHIPPINGCATEGORIES])
+            ->where(['shippingCategoryId' => $shippingCategory->id])
+            ->column();
+
+        // Newly set product types this shipping category is available to
+        $newProductTypeIds = ArrayHelper::getColumn($shippingCategory->getProductTypes(), 'id');
+
+        foreach ($currentProductTypeIds as $oldProductTypeId) {
+            // If we are removing a product type for this shipping category the products of that type should be re-saved
+            if (!in_array($oldProductTypeId, $newProductTypeIds, false)) {
+                // Re-save all products that no longer have this shipping category available to them
+                Craft::$app->getQueue()->push(new ResaveElements([
+                    'elementType' => Product::class,
+                    'criteria' => [
+                        'typeId' => $oldProductTypeId,
+                        'siteId' => '*',
+                        'unique' => true,
+                        'status' => null,
+                        'enabledForSite' => false,
+                    ]
+                ]));
+            }
+        }
+
+        // Remove existing Categories <-> ProductType relationships
+        Craft::$app->getDb()->createCommand()->delete(Table::PRODUCTTYPES_SHIPPINGCATEGORIES, ['shippingCategoryId' => $shippingCategory->id])->execute();
+
+        // Add back the new categories
+        foreach ($shippingCategory->getProductTypes() as $productType) {
+            $data = ['productTypeId' => (int)$productType->id, 'shippingCategoryId' => (int)$shippingCategory->id];
+            Craft::$app->getDb()->createCommand()->insert(Table::PRODUCTTYPES_SHIPPINGCATEGORIES, $data)->execute();
         }
 
         // Update Service cache
-        $this->_memoizeShippingCategory($model);
+        $this->_memoizeShippingCategory($shippingCategory);
 
-        if (null !== $oldHandle && $model->handle != $oldHandle) {
+        if (null !== $oldHandle && $shippingCategory->handle != $oldHandle) {
             unset($this->_shippingCategoriesByHandle[$oldHandle]);
         }
+
 
         return true;
     }
@@ -231,14 +281,14 @@ class ShippingCategories extends Component
      * @param $productTypeId
      * @return array
      */
-    public function getShippingCategoriesByProductId($productTypeId): array
+    public function getShippingCategoriesByProductTypeId($productTypeId): array
     {
         $rows = $this->_createShippingCategoryQuery()
-            ->innerJoin('{{%commerce_producttypes_shippingcategories}} productTypeShippingCategories', '[[shippingCategories.id]] = [[productTypeShippingCategories.shippingCategoryId]]')
-            ->innerJoin('{{%commerce_producttypes}} productTypes', '[[productTypeShippingCategories.productTypeId]] = [[productTypes.id]]')
-            ->where(['productTypes.id' => $productTypeId])
+            ->innerJoin(Table::PRODUCTTYPES_SHIPPINGCATEGORIES . ' productTypeShippingCategories', '[[shippingCategories.id]] = [[productTypeShippingCategories.shippingCategoryId]]')
+            ->where(['productTypeShippingCategories.productTypeId' => $productTypeId])
             ->all();
 
+        // Always need at least the default category
         if (empty($rows)) {
             $category = $this->getDefaultShippingCategory();
 
@@ -261,8 +311,6 @@ class ShippingCategories extends Component
         return $shippingCategories;
     }
 
-    // Private methods
-    // =========================================================================
 
     /**
      * Memoize a shipping category model by its ID and handle.
@@ -290,6 +338,6 @@ class ShippingCategories extends Component
                 'shippingCategories.description',
                 'shippingCategories.default'
             ])
-            ->from(['{{%commerce_shippingcategories}} shippingCategories']);
+            ->from([Table::SHIPPINGCATEGORIES . ' shippingCategories']);
     }
 }

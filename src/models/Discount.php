@@ -10,22 +10,24 @@ namespace craft\commerce\models;
 use Craft;
 use craft\commerce\base\Model;
 use craft\commerce\Plugin;
+use craft\commerce\records\Discount as DiscountRecord;
 use craft\helpers\UrlHelper;
+use craft\validators\UniqueValidator;
+use DateTime;
 
 /**
  * Discount model
  *
  * @property string|false $cpEditUrl
- * @property string $percentDiscountAsPercent
+ * @property-read string $percentDiscountAsPercent
+ * @property array $categoryIds
+ * @property array $purchasableIds
  * @property array $userGroupIds
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class Discount extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -58,21 +60,23 @@ class Discount extends Model
 
     /**
      * @var int Total use limit by guests or users
+     * @since 3.0
      */
-    public $totalUseLimit = 0;
+    public $totalDiscountUseLimit = 0;
 
     /**
      * @var int Total use counter;
+     * @since 3.0
      */
-    public $totalUses = 0;
+    public $totalDiscountUses = 0;
 
     /**
-     * @var \DateTime|null Date the discount is valid from
+     * @var DateTime|null Date the discount is valid from
      */
     public $dateFrom;
 
     /**
-     * @var \DateTime|null Date the discount is valid to
+     * @var DateTime|null Date the discount is valid to
      */
     public $dateTo;
 
@@ -80,6 +84,11 @@ class Discount extends Model
      * @var float Total minimum spend on matching items
      */
     public $purchaseTotal = 0;
+
+    /**
+     * @var string|null Condition that must match to match the order, null or empty string means match all
+     */
+    public $orderConditionFormula;
 
     /**
      * @var int Total minimum qty of matching items
@@ -95,6 +104,11 @@ class Discount extends Model
      * @var float Base amount of discount
      */
     public $baseDiscount = 0;
+
+    /**
+     * @var string Type of discount for the base discount e.g. currency value or percentage
+     */
+    public $baseDiscountType;
 
     /**
      * @var float Amount of discount per item
@@ -117,9 +131,14 @@ class Discount extends Model
     public $excludeOnSale;
 
     /**
-     * @var bool Order has free shipping.
+     * @var bool Matching products have free shipping.
      */
-    public $freeShipping;
+    public $hasFreeShippingForMatchingItems;
+
+    /**
+     * @var bool The whole order has free shipping.
+     */
+    public $hasFreeShippingForOrder;
 
     /**
      * @var bool Match all user groups.
@@ -137,6 +156,11 @@ class Discount extends Model
     public $allCategories;
 
     /**
+     * @var string Type of relationship between Categories and Products
+     */
+    public $categoryRelationshipType;
+
+    /**
      * @var bool Discount enabled?
      */
     public $enabled = true;
@@ -152,14 +176,24 @@ class Discount extends Model
     public $sortOrder;
 
     /**
-     * @var \DateTime|null
+     * @var DateTime|null
      */
     public $dateCreated;
 
     /**
-     * @var \DateTime|null
+     * @var DateTime|null
      */
     public $dateUpdated;
+
+    /**
+     * @var bool Discount ignores sales
+     */
+    public $ignoreSales = true;
+
+    /**
+     * @var bool What the per item amount and per item percentage off amounts can apply to
+     */
+    public $appliedTo = DiscountRecord::APPLIED_TO_MATCHING_LINE_ITEMS;
 
     /**
      * @var int[] Product Ids
@@ -176,8 +210,6 @@ class Discount extends Model
      */
     private $_userGroupIds;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
@@ -266,6 +298,22 @@ class Discount extends Model
     }
 
     /**
+     * @param bool $value
+     */
+    public function setHasFreeShippingForMatchingItems($value)
+    {
+        $this->hasFreeShippingForMatchingItems = (bool)$value;
+    }
+
+    /**
+     * @return bool
+     */
+    public function getHasFreeShippingForMatchingItems(): bool
+    {
+        return (bool)$this->hasFreeShippingForMatchingItems;
+    }
+
+    /**
      * @return string
      */
     public function getPercentDiscountAsPercent(): string
@@ -283,18 +331,56 @@ class Discount extends Model
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['name'], 'required']
+        $rules = parent::defineRules();
+
+        $rules[] = [['name'], 'required'];
+        $rules[] = [
+            [
+                'perUserLimit',
+                'perEmailLimit',
+                'totalDiscountUseLimit',
+                'totalDiscountUses',
+                'purchaseTotal',
+                'purchaseQty',
+                'maxPurchaseQty',
+                'baseDiscount',
+                'perItemDiscount',
+                'percentDiscount'
+            ], 'number', 'skipOnEmpty' => false
         ];
+        $rules[] = [['code'], UniqueValidator::class, 'targetClass' => DiscountRecord::class, 'targetAttribute' => ['code']];
+        $rules[] = [
+            ['categoryRelationshipType'], 'in', 'range' =>
+                [
+                    DiscountRecord::CATEGORY_RELATIONSHIP_TYPE_SOURCE,
+                    DiscountRecord::CATEGORY_RELATIONSHIP_TYPE_TARGET,
+                    DiscountRecord::CATEGORY_RELATIONSHIP_TYPE_BOTH
+                ]
+        ];
+        $rules[] = [
+            ['appliedTo'], 'in', 'range' =>
+                [
+                    DiscountRecord::APPLIED_TO_MATCHING_LINE_ITEMS,
+                    DiscountRecord::APPLIED_TO_ALL_LINE_ITEMS
+                ]
+        ];
+        $rules[] = [['code'], UniqueValidator::class, 'targetClass' => DiscountRecord::class, 'targetAttribute' => ['code']];
+        $rules[] = [
+            'hasFreeShippingForOrder', function($attribute, $params, $validator) {
+                if ($this->hasFreeShippingForMatchingItems && $this->hasFreeShippingForOrder) {
+                    $this->addError($attribute, 'Free shipping can only be for whole order or matching items, not both.');
+                }
+            }
+        ];
+
+        return $rules;
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
-     * Loads the sale relations
+     * Loads the discount relations
      */
     private function _loadRelations()
     {

@@ -21,16 +21,13 @@ use yii\web\Response;
  */
 class TaxCategoriesController extends BaseTaxSettingsController
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @return Response
      */
     public function actionIndex(): Response
     {
         $taxCategories = Plugin::getInstance()->getTaxCategories()->getAllTaxCategories();
-        return $this->renderTemplate('commerce/settings/taxcategories/index', compact('taxCategories'));
+        return $this->renderTemplate('commerce/tax/taxcategories/index', compact('taxCategories'));
     }
 
     /**
@@ -43,7 +40,8 @@ class TaxCategoriesController extends BaseTaxSettingsController
     {
         $variables = [
             'id' => $id,
-            'taxCategory' => $taxCategory
+            'taxCategory' => $taxCategory,
+            'productTypes' => Plugin::getInstance()->getProductTypes()->getAllProductTypes()
         ];
 
         if (!$variables['taxCategory']) {
@@ -61,10 +59,10 @@ class TaxCategoriesController extends BaseTaxSettingsController
         if ($variables['taxCategory']->id) {
             $variables['title'] = $variables['taxCategory']->name;
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a new tax category');
+            $variables['title'] = Plugin::t('Create a new tax category');
         }
 
-        return $this->renderTemplate('commerce/settings/taxcategories/_edit', $variables);
+        return $this->renderTemplate('commerce/tax/taxcategories/_edit', $variables);
     }
 
     /**
@@ -84,6 +82,15 @@ class TaxCategoriesController extends BaseTaxSettingsController
         $taxCategory->description = Craft::$app->getRequest()->getBodyParam('description');
         $taxCategory->default = (bool)Craft::$app->getRequest()->getBodyParam('default');
 
+        // Set the new product types
+        $productTypes = [];
+        foreach (Craft::$app->getRequest()->getBodyParam('productTypes', []) as $productTypeId) {
+            if ($productTypeId && $productType = Plugin::getInstance()->getProductTypes()->getProductTypeById($productTypeId)) {
+                $productTypes[] = $productType;
+            }
+        }
+        $taxCategory->setProductTypes($productTypes);
+
         // Save it
         if (Plugin::getInstance()->getTaxCategories()->saveTaxCategory($taxCategory)) {
             if (Craft::$app->getRequest()->getAcceptsJson()) {
@@ -94,7 +101,7 @@ class TaxCategoriesController extends BaseTaxSettingsController
                 ]);
             }
 
-            Craft::$app->getSession()->setNotice(Craft::t('commerce', 'Tax category saved.'));
+            Craft::$app->getSession()->setNotice(Plugin::t('Tax category saved.'));
             $this->redirectToPostedUrl($taxCategory);
         } else {
             if (Craft::$app->getRequest()->getAcceptsJson()) {
@@ -103,7 +110,7 @@ class TaxCategoriesController extends BaseTaxSettingsController
                 ]);
             }
 
-            Craft::$app->getSession()->setError(Craft::t('commerce', 'Couldn’t save tax category.'));
+            Craft::$app->getSession()->setError(Plugin::t('Couldn’t save tax category.'));
         }
 
         // Send the tax category back to the template
@@ -128,6 +135,6 @@ class TaxCategoriesController extends BaseTaxSettingsController
             return $this->asJson(['success' => true]);
         }
 
-        return $this->asErrorJson(Craft::t('commerce', 'Could not delete tax category'));
+        return $this->asErrorJson(Plugin::t('Could not delete tax category'));
     }
 }

@@ -8,6 +8,7 @@
 namespace craft\commerce\elements\db;
 
 use Craft;
+use craft\commerce\db\Table;
 use craft\commerce\elements\Product;
 use craft\commerce\elements\Variant;
 use craft\commerce\models\ProductType;
@@ -41,23 +42,15 @@ use yii\db\Connection;
  */
 class ProductQuery extends ElementQuery
 {
-    // Properties
-    // =========================================================================
+    /**
+     * @var bool Whether the product is available for purchase
+     */
+    public $availableForPurchase;
 
     /**
      * @var bool Whether to only return products that the user has permission to edit.
      */
     public $editable = false;
-
-    /**
-     * @var int|int[]|null The product type ID(s) that the resulting products must have.
-     */
-    public $typeId;
-
-    /**
-     * @var mixed The Post Date that the resulting products must have.
-     */
-    public $postDate;
 
     /**
      * @var mixed The Post Date that the resulting products must have.
@@ -90,7 +83,7 @@ class ProductQuery extends ElementQuery
     public $defaultWeight;
 
     /**
-     * @var float The default sku the resulting products must have.
+     * @var mixed The default sku the resulting products must have.
      */
     public $defaultSku;
 
@@ -100,17 +93,20 @@ class ProductQuery extends ElementQuery
     public $hasVariant;
 
     /**
-     * @var bool Whether the product is available for purchase
+     * @var mixed The Post Date that the resulting products must have.
      */
-    public $availableForPurchase;
+    public $postDate;
+
+    /**
+     * @var int|int[]|null The product type ID(s) that the resulting products must have.
+     */
+    public $typeId;
 
     /**
      * @inheritdoc
      */
     protected $defaultOrderBy = ['commerce_products.postDate' => SORT_DESC];
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
@@ -184,7 +180,7 @@ class ProductQuery extends ElementQuery
         } else if ($value !== null) {
             $this->typeId = (new Query())
                 ->select(['id'])
-                ->from(['{{%commerce_producttypes}}'])
+                ->from([Table::PRODUCTTYPES])
                 ->where(Db::parseParam('handle', $value))
                 ->column();
         } else {
@@ -495,8 +491,6 @@ class ProductQuery extends ElementQuery
         return parent::status($value);
     }
 
-    // Protected Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
@@ -535,8 +529,8 @@ class ProductQuery extends ElementQuery
         if ($commerce && version_compare($commerce['version'], '2.0.0-beta.5', '>=')) {
             $this->query->addSelect(['commerce_products.availableForPurchase']);
 
-            if ($this->availableForPurchase) {
-                $this->subQuery->andWhere(['commerce_products.availableForPurchase' => true]);
+            if ($this->availableForPurchase !== null) {
+                $this->subQuery->andWhere(['commerce_products.availableForPurchase' => $this->availableForPurchase]);
             }
         }
 
@@ -588,7 +582,7 @@ class ProductQuery extends ElementQuery
      */
     protected function statusCondition(string $status)
     {
-        $currentTimeDb = Db::prepareDateForDb(new \DateTime());
+        $currentTimeDb = Db::prepareDateForDb(new DateTime());
 
         switch ($status) {
             case Product::STATUS_LIVE:
@@ -629,8 +623,6 @@ class ProductQuery extends ElementQuery
         }
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * Applies the 'editable' param to the query being prepared.
@@ -670,12 +662,12 @@ class ProductQuery extends ElementQuery
 
             $variantQuery->limit = null;
             $variantQuery->select('commerce_variants.productId');
-            $productIds = $variantQuery->column();
+            $productIds = $variantQuery->asArray()->column();
 
             // Remove any blank product IDs (if any)
             $productIds = array_filter($productIds);
 
-            $this->subQuery->andWhere(['in', 'commerce_products.id', $productIds]);
+            $this->subQuery->andWhere(['commerce_products.id' => array_values($productIds)]);
         }
     }
 
@@ -712,7 +704,7 @@ class ProductQuery extends ElementQuery
         $this->subQuery->andWhere($condition);
 
         if ($joinSections) {
-            $this->subQuery->innerJoin('{{%commerce_producttypes}} commerce_producttypes', '[[producttypes.id]] = [[products.typeId]]');
+            $this->subQuery->innerJoin(Table::PRODUCTTYPES . ' commerce_producttypes', '[[producttypes.id]] = [[products.typeId]]');
         }
     }
 }

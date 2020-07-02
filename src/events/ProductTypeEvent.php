@@ -18,16 +18,13 @@ use yii\base\Event;
  */
 class ProductTypeEvent extends Event
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var ProductType|null The product type model associated with the event.
      */
     public $productType;
 
     /**
-     * @var bool Whether the category group is brand new
+     * @var bool Whether the product type is brand new
      */
     public $isNew = false;
 }

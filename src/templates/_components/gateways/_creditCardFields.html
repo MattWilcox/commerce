@@ -18,7 +18,7 @@
             }) }}
         </div>
 
-        <div class="item" data-colspan="1">
+        <div>
             {{ forms.text({
                 name: 'lastName',
                 maxlength: 70,
@@ -43,9 +43,8 @@
 <fieldset class="card-data">
     <legend>{{ 'Card'|t('commerce') }}</legend>
 
-    <div class="multitext">
-        <div class="multitextrow">
-
+    <div>
+        <div>
             {{ forms.text({
                 name: 'number',
                 maxlength: 19,
@@ -57,10 +56,10 @@
 
         </div>
 
-        <div class="multitextrow">
+        <div>
             {{ forms.text({
                 class: 'card-expiry'~(paymentForm.getErrors('month') or paymentForm.getErrors('year') ? ' error'),
-                type: 'tel',
+                type: 'text',
                 name: 'expiry',
                 placeholder: "MM"|t('commerce')~' / '~"YYYY"|t('commerce'),
                 value: paymentForm.expiry

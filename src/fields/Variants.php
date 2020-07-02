@@ -9,7 +9,12 @@ namespace craft\commerce\fields;
 
 use Craft;
 use craft\commerce\elements\Variant;
+use craft\commerce\gql\arguments\elements\Variant as VariantArguments;
+use craft\commerce\gql\interfaces\elements\Variant as VariantInterface;
+use craft\commerce\gql\resolvers\elements\Variant as VariantResolver;
+use craft\commerce\Plugin;
 use craft\fields\BaseRelationField;
+use GraphQL\Type\Definition\Type;
 
 /**
  * Class Variant Field
@@ -19,15 +24,12 @@ use craft\fields\BaseRelationField;
  */
 class Variants extends BaseRelationField
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public static function displayName(): string
     {
-        return Craft::t('commerce', 'Commerce Variants');
+        return Plugin::t('Commerce Variants');
     }
 
     /**
@@ -35,11 +37,22 @@ class Variants extends BaseRelationField
      */
     public static function defaultSelectionLabel(): string
     {
-        return Craft::t('commerce', 'Add a variant');
+        return Plugin::t('Add a variant');
     }
 
-    // Protected Methods
-    // =========================================================================
+    /**
+     * @inheritdoc
+     * @since 3.1.4
+     */
+    public function getContentGqlType()
+    {
+        return [
+            'name' => $this->handle,
+            'type' => Type::listOf(VariantInterface::getType()),
+            'args' => VariantArguments::getArguments(),
+            'resolve' => VariantResolver::class . '::resolve',
+        ];
+    }
 
     /**
      * @inheritdoc

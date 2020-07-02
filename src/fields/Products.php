@@ -8,8 +8,15 @@
 namespace craft\commerce\fields;
 
 use Craft;
+use craft\base\ElementInterface;
 use craft\commerce\elements\Product;
+use craft\commerce\gql\arguments\elements\Product as ProductArguments;
+use craft\commerce\gql\interfaces\elements\Product as ProductInterface;
+use craft\commerce\gql\resolvers\elements\Product as ProductResolver;
+use craft\commerce\Plugin;
+use craft\commerce\web\assets\editproduct\EditProductAsset;
 use craft\fields\BaseRelationField;
+use GraphQL\Type\Definition\Type;
 
 /**
  * Class Product Field
@@ -19,9 +26,6 @@ use craft\fields\BaseRelationField;
  */
 class Products extends BaseRelationField
 {
-    // Public Methods
-    // =========================================================================
-
     public function __construct(array $config = [])
     {
         // Never needed and allows us to instantiate the field while ignoring old setting until the Product field migration has run.
@@ -34,7 +38,7 @@ class Products extends BaseRelationField
      */
     public static function displayName(): string
     {
-        return Craft::t('commerce', 'Commerce Products');
+        return Plugin::t('Commerce Products');
     }
 
     /**
@@ -42,11 +46,28 @@ class Products extends BaseRelationField
      */
     public static function defaultSelectionLabel(): string
     {
-        return Craft::t('commerce', 'Add a product');
+        return Plugin::t('Add a product');
     }
 
-    // Protected Methods
-    // =========================================================================
+    public function getInputHtml($value, ElementInterface $element = null): string
+    {
+        Craft::$app->getView()->registerAssetBundle(EditProductAsset::class);
+        return parent::getInputHtml($value, $element);
+    }
+
+    /**
+     * @inheritdoc
+     * @since 3.1.4
+     */
+    public function getContentGqlType()
+    {
+        return [
+            'name' => $this->handle,
+            'type' => Type::listOf(ProductInterface::getType()),
+            'args' => ProductArguments::getArguments(),
+            'resolve' => ProductResolver::class . '::resolve',
+        ];
+    }
 
     /**
      * @inheritdoc

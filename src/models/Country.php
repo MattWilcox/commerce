@@ -8,6 +8,7 @@
 namespace craft\commerce\models;
 
 use craft\commerce\base\Model;
+use craft\commerce\Plugin;
 use craft\helpers\UrlHelper;
 
 /**
@@ -19,9 +20,6 @@ use craft\helpers\UrlHelper;
  */
 class Country extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -42,8 +40,11 @@ class Country extends Model
      */
     public $isStateRequired;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var bool Is Enabled
+     */
+    public $enabled;
+
 
     /**
      * @return string
@@ -54,14 +55,25 @@ class Country extends Model
     }
 
     /**
+     * @return array
+     * @since 3.1
+     */
+    public function getStates()
+    {
+        return Plugin::getInstance()->getStates()->getStatesByCountryId($this->id);
+    }
+
+    /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['iso', 'name'], 'required'],
-            [['iso'], 'string', 'length' => [2]],
-        ];
+        $rules = parent::defineRules();
+
+        $rules[] = [['iso', 'name'], 'required'];
+        $rules[] = [['iso'], 'string', 'length' => [2]];
+
+        return $rules;
     }
 
     /**
@@ -69,6 +81,6 @@ class Country extends Model
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/countries/' . $this->id);
+        return UrlHelper::cpUrl('commerce/store-settings/countries/' . $this->id);
     }
 }

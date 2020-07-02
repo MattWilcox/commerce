@@ -12,33 +12,36 @@
 
 {% set fullPageForm = true %}
 {% set saveShortcutRedirect = continueEditingUrl %}
+{% do view.setIsDeltaRegistrationActive(true) %}
 
 {% import "_includes/forms" as forms %}
 {% import "commerce/products/_fields" as productFields %}
 
-
 {% block header %}
+  <div class="flex flex-nowrap">
     {{ block('pageTitle') }}
     {{ block('contextMenu') }}
-    <div class="flex-grow"></div>
+  </div>
+  <div class="flex">
     {% if showPreviewBtn or shareUrl is defined %}
+      <div class="btngroup">
         {% if showPreviewBtn %}
-            <div class="btn livepreviewbtn">{{ "Live Preview"|t('app') }}</div>
+          <div id="preview-btn" class="btn livepreviewbtn">{{ 'Preview'|t('app') }}</div>
         {% endif %}
         {% if shareUrl is defined %}
-            <a href="{{ shareUrl }}" class="btn sharebtn"
-               target="_blank">{{ 'Share'|t('app') }}</a>
+          <a id="share-btn" href="{{ shareUrl }}" class="btn sharebtn" target="_blank">{{ 'Share'|t('app') }}</a>
         {% endif %}
-        <div class="flex-grow"></div>
+      </div>
     {% endif %}
+
     {{ block('actionButton') }}
+  </div>
 {% endblock %}
 
 
 {% block contextMenu %}
     {% if craft.app.getIsMultiSite() %}
-        <div class="btn menubtn sitemenubtn"
-             data-icon="world">{{ product.site.name|t('site') }}</div>
+        <div class="btn menubtn sitemenubtn" data-icon="world">{{ product.site.name|t('site') }}</div>
         <div class="menu">
             <ul class="padded">
                 {% for siteId in siteIds %}
@@ -79,10 +82,8 @@
                 </li>
                 {% if product.id %}
                     <li>
-                        <a class="formsubmit" data-param="productId"
-                           data-value=""
-                           data-redirect="{{ continueEditingUrl|hash }}">
-                            {{ "Save as a new product"|t('commerce') }}
+                        <a class="formsubmit" data-action="commerce/products/duplicate-product" data-redirect="{{ '{cpEditUrl}'|hash }}">
+                            {{ "Save as a new {type}"|t('app', { type: product.lowerDisplayName() }) }}
                         </a>
                     </li>
                 {% endif %}
@@ -126,6 +127,7 @@
                     {% include "_includes/fields" with {
                         fields: tab.getFields(),
                         element: product,
+                        registerDeltas: true,
                     } only %}
                 </div>
             {% endfor %}
@@ -151,6 +153,8 @@
             </div>
         </div>
     {% endif %}
+
+    {% hook "cp.commerce.product.edit.content" %}
 {% endblock %}
 
 
@@ -175,20 +179,19 @@
     {% endif %}
 </div>
 
-<hr>
-
 <div class="meta">
     {{ productFields.behavioralMetaFields(product) }}
 </div>
 
 {% if not productType.hasVariants %}
-    <hr>
     {% namespace 'variants['~(product.defaultVariant.id ?: 'new1')~']' %}
+        <input class="default-input" type="hidden"
+             name="isDefault"
+             value="1">
         <div class="meta">
-            {{ productFields.generalVariantFields(product.defaultVariant) }}
+            {{ productFields.generalVariantFields(product.defaultVariant, product) }}
         </div>
         {% if productType.hasDimensions %}
-            <hr>
             <div class="meta">
                 {{ productFields.dimensionVariantFields(product.defaultVariant) }}
             </div>
@@ -196,55 +199,55 @@
     {% endnamespace %}
 {% endif %}
 
-    {% if product.id %}
-<hr>
-<div class="meta read-only">
-    <div class="data">
-        <h5 class="heading">{{ "Related Sales"|t('commerce') }}</h5>
+{% if product.id %}
+  <div class="meta">
+    {# Related Sales #}
+    {# TODO allow viewing of sales when a view promotions permission is introduced #}
+    {% if currentUser.can('commerce-managePromotions') and not craft.app.request.isAjax %}
+      {{ productFields.relatedSales(product.defaultVariant.id, productType.hasVariants) }}
+
+      <div class="data">
+        <h5 class="heading">{{ "Related Discounts"|t('commerce') }}</h5>
         <div class="value">
-            {% if not sales|length %}
-                <a class="btn small add icon"
-                   href="{{ cpUrl('commerce/promotions/sales/new?purchasableIds='~product.id) }}">Add
-                    Sale</a>
-            {% else %}
-                <ul class="commerce-sales">
-                    {% for sale in sales %}
-                        <li>
-                            <a href="{{ sale.getCpEditUrl() }}"><span>{{ sale.name }}</span></a>
-                        </li>
-                    {% endfor %}
-                </ul>
-            {% endif %}
+          {% if discounts|length %}
+            <ul class="commerce-sales">
+              {% for discount in discounts %}
+                <li>
+                  <a href="{{ discount.getCpEditUrl() }}"><span>{{ discount.name }}</span></a>
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          {# Add Discount Button #}
+          <a class="btn small add icon"
+             href="{{ cpUrl('commerce/promotions/discounts/new?purchasableIds='~product.id) }}">{{ 'Add Discount'|t('commerce') }}</a>
         </div>
-    </div>
-    {% if sales|length %}
-        <div class="data">
-            <h5 class="heading"></h5>
-            <div class="value">
-                <a class="btn small add icon"
-                   href="{{ cpUrl('commerce/promotions/sales/new?purchasableIds='~product.id) }}">Add
-                    Sale</a>
-            </div>
-        </div>
+      </div>
     {% endif %}
     <div class="data">
-        <h5 class="heading">{{ "Date Created"|t('commerce') }}</h5>
-        <div class="value">{{ product.dateCreated|date('short') }} {{ product.dateCreated|time('short') }}</div>
+      <h5 class="heading">{{ "Date Created"|t('commerce') }}</h5>
+      <div class="value">{{ product.dateCreated|date('short') }} {{ product.dateCreated|time('short') }}</div>
     </div>
     <div class="data">
-        <h5 class="heading">{{ "Date Updated"|t('commerce') }}</h5>
-        <div class="value">{{ product.dateUpdated|date('short') }} {{ product.dateUpdated|time('short') }}</div>
+      <h5 class="heading">{{ "Date Updated"|t('commerce') }}</h5>
+      <div class="value">{{ product.dateUpdated|date('short') }} {{ product.dateUpdated|time('short') }}</div>
     </div>
-
-    {% endif %}
-
-    {% hook "cp.commerce.product.edit.details" %}
-</div>
+  </div>
+  {% hook "cp.commerce.product.edit.details" %}
+{% endif %}
 {% endblock %}
 
-
-    {% if not product.slug %}
-        {% js %}
-            window.slugGenerator = new Craft.SlugGenerator('#title', '#slug');
-        {% endjs %}
-    {% endif %}
+{% if not product.slug %}
+  {% js %}
+      window.slugGenerator = new Craft.SlugGenerator('#title', '#slug');
+  {% endjs %}
+{% elseif product.id %}
+  {% js %}
+      new Craft.Commerce.ProductEdit({
+        id: {{ product.id|raw }},
+        hasVariants: {{ productType.hasVariants ? 'true' : 'false' }},
+        purchasables: {{ product.getVariants()|map(v => {id: v.id, title: v.title, sku: v.sku})|json_encode|raw }}
+      });
+  {% endjs %}
+{% endif %}

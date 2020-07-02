@@ -9,7 +9,11 @@ namespace craft\commerce\web\twig;
 
 use Craft;
 use craft\commerce\errors\CurrencyException;
+use craft\commerce\helpers\Currency;
 use craft\commerce\Plugin;
+use Twig\Error\Error;
+use Twig\Extension\AbstractExtension;
+use Twig\TwigFilter;
 
 /**
  * Class CommerceTwigExtension
@@ -17,11 +21,8 @@ use craft\commerce\Plugin;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
-class Extension extends \Twig_Extension
+class Extension extends AbstractExtension
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @return string
      */
@@ -36,8 +37,8 @@ class Extension extends \Twig_Extension
     public function getFilters(): array
     {
         return [
-            new \Twig_SimpleFilter('json_encode_filtered', [$this, 'jsonEncodeFiltered']),
-            new \Twig_SimpleFilter('commerceCurrency', [$this, 'commerceCurrency']),
+            new TwigFilter('json_encode_filtered', [$this, 'jsonEncodeFiltered']),
+            new TwigFilter('commerceCurrency', [$this, 'commerceCurrency']),
 
         ];
     }
@@ -54,11 +55,13 @@ class Extension extends \Twig_Extension
      */
     public function commerceCurrency($amount, $currency, $convert = false, $format = true, $stripZeros = false): string
     {
-        $this->_validatePaymentCurrency($currency);
-
         // return input if no currency passed, and both convert and format are false.
         if (!$convert && !$format) {
             return $amount;
+        }
+
+        if ($convert) {
+            $this->_validatePaymentCurrency($currency); // must be a payment currency to convert
         }
 
         if ($convert) {
@@ -66,6 +69,12 @@ class Extension extends \Twig_Extension
         }
 
         if ($format) {
+
+            // Round it before formatting
+            if ($currencyData = Plugin::getInstance()->getCurrencies()->getCurrencyByIso($currency)) {
+                $amount = Currency::round($amount, $currencyData); // Will round to the right minorUnits
+            }
+
             $amount = Craft::$app->getFormatter()->asCurrency($amount, $currency, [], [], $stripZeros);
         }
 
@@ -106,19 +115,16 @@ class Extension extends \Twig_Extension
         return $sanitized;
     }
 
-    // Private methods
-    // =========================================================================
 
     /**
      * @param $currency
-     * @throws \Twig_Error
      */
     private function _validatePaymentCurrency($currency)
     {
         try {
             $currency = Plugin::getInstance()->getPaymentCurrencies()->getPaymentCurrencyByIso($currency);
         } catch (CurrencyException $exception) {
-            throw new \Twig_Error($exception->getMessage());
+            throw new Error($exception->getMessage());
         }
     }
 

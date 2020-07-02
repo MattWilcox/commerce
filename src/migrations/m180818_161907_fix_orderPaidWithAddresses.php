@@ -23,13 +23,12 @@ class m180818_161907_fix_orderPaidWithAddresses extends Migration
         // Need to loop over every order that does not have a date paid
         $orderIds = (new Query())
             ->select(['id'])
-            ->from('{{%commerce_orders}}')
+            ->from(['{{%commerce_orders}}'])
             ->where(['datePaid' => null])
             ->andWhere('[[totalPaid]] >= [[totalPrice]]')
             ->column();
 
         foreach ($orderIds as $id) {
-
             $recentSuccessfulTransactionDate = (new Query())
                 ->select(['dateUpdated'])
                 ->from(['{{%commerce_transactions}}'])
@@ -53,7 +52,7 @@ class m180818_161907_fix_orderPaidWithAddresses extends Migration
         // Get all order address IDs for completed orders where the address is still in the customers address book
         $badAddresses = (new Query())
             ->select(['[[orders.id]] AS orderId', '[[orders.shippingAddressId]]', '[[customerAddresses.addressId]]'])
-            ->from('{{%commerce_orders}} orders')
+            ->from(['{{%commerce_orders}} orders'])
             ->where(['orders.isCompleted' => true])
             ->andWhere('[[customerAddresses.addressId]] IS NOT NULL')
             ->leftJoin('{{%commerce_customers_addresses}} customerAddresses', '[[customerAddresses.addressId]] = [[orders.shippingAddressId]]')
@@ -62,7 +61,7 @@ class m180818_161907_fix_orderPaidWithAddresses extends Migration
         foreach ($badAddresses as $badAddress) {
             $address = (new Query())
                 ->select('*')
-                ->from('{{%commerce_addresses}}')
+                ->from(['{{%commerce_addresses}}'])
                 ->where(['id' => $badAddress['shippingAddressId']])
                 ->one();
 
@@ -79,7 +78,7 @@ class m180818_161907_fix_orderPaidWithAddresses extends Migration
         // Get all order address IDs for completed orders where the address is still in the customers address book
         $badAddresses = (new Query())
             ->select(['[[orders.id]] AS orderId', '[[orders.billingAddressId]]', '[[customerAddresses.addressId]]'])
-            ->from('{{%commerce_orders}} orders')
+            ->from(['{{%commerce_orders}} orders'])
             ->where(['orders.isCompleted' => true])
             ->andWhere('[[customerAddresses.addressId]] IS NOT NULL')
             ->leftJoin('{{%commerce_customers_addresses}} customerAddresses', '[[customerAddresses.addressId]] = [[orders.billingAddressId]]')
@@ -88,7 +87,7 @@ class m180818_161907_fix_orderPaidWithAddresses extends Migration
         foreach ($badAddresses as $badAddress) {
             $address = (new Query())
                 ->select('*')
-                ->from('{{%commerce_addresses}}')
+                ->from(['{{%commerce_addresses}}'])
                 ->where(['id' => $badAddress['billingAddressId']])
                 ->one();
 

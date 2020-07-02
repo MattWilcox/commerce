@@ -7,6 +7,8 @@
 
 namespace craft\commerce\services;
 
+use Craft;
+use craft\commerce\db\Table;
 use craft\commerce\models\ShippingRuleCategory;
 use craft\commerce\records\ShippingRuleCategory as ShippingRuleCategoryRecord;
 use craft\db\Query;
@@ -20,16 +22,11 @@ use yii\base\Component;
  */
 class ShippingRuleCategories extends Component
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var ShippingRuleCategory[][]
      */
     private $_shippingRuleCategoriesByRuleId = [];
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns an array of shipping rules categories per the rule's ID.
@@ -63,7 +60,7 @@ class ShippingRuleCategories extends Component
     public function createShippingRuleCategory(ShippingRuleCategory $model, bool $runValidation = true): bool
     {
         if ($runValidation && !$model->validate()) {
-            \Craft::info('Shipping rule category not saved due to validation error.', __METHOD__);
+            Craft::info('Shipping rule category not saved due to validation error.', __METHOD__);
 
             return false;
         }
@@ -109,8 +106,6 @@ class ShippingRuleCategories extends Component
         return false;
     }
 
-    // Private methods
-    // =========================================================================
 
     /**
      * Returns a Query object prepped for retrieving shipping rule categories.
@@ -129,6 +124,6 @@ class ShippingRuleCategories extends Component
                 'weightRate',
                 'percentageRate',
             ])
-            ->from(['{{%commerce_shippingrule_categories}}']);
+            ->from([Table::SHIPPINGRULE_CATEGORIES]);
     }
 }

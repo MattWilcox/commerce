@@ -7,6 +7,7 @@
 
 namespace craft\commerce\base;
 
+use function count;
 use craft\base\ElementInterface;
 use craft\commerce\elements\Subscription;
 use craft\commerce\Plugin as Commerce;
@@ -21,7 +22,7 @@ use yii\base\InvalidConfigException;
  * Plan model
  *
  * @property GatewayInterface $gateway
- * @property \craft\elements\Entry|null $information
+ * @property Entry|null $information
  * @property int $subscriptionCount
  * @property User $user
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
@@ -29,13 +30,8 @@ use yii\base\InvalidConfigException;
  */
 abstract class Plan extends Model implements PlanInterface
 {
-    // Traits
-    // =========================================================================
-
     use PlanTrait;
 
-    // Properties
-    // =========================================================================
 
     /**
      * @var SubscriptionGatewayInterface|null the gateway
@@ -47,8 +43,6 @@ abstract class Plan extends Model implements PlanInterface
      */
     private $_data;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns the billing plan friendly name
@@ -125,7 +119,7 @@ abstract class Plan extends Model implements PlanInterface
      */
     public function hasActiveSubscription(int $userId): bool
     {
-        return (bool)\count($this->getActiveUserSubscriptions($userId));
+        return (bool)count($this->getActiveUserSubscriptions($userId));
     }
 
     /**
@@ -157,7 +151,7 @@ abstract class Plan extends Model implements PlanInterface
             ->anyStatus()
             ->all();
     }
-    
+
     /**
      * @inheritdoc
      */

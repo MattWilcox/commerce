@@ -10,11 +10,13 @@ namespace craft\commerce\services;
 use Craft;
 use craft\commerce\base\Plan;
 use craft\commerce\base\SubscriptionGateway;
+use craft\commerce\db\Table;
 use craft\commerce\events\PlanEvent;
-use craft\commerce\Plugin as Commerce;
+use craft\commerce\Plugin;
 use craft\commerce\records\Plan as PlanRecord;
 use craft\db\Query;
 use craft\helpers\Db;
+use DateTime;
 use yii\base\Component;
 use yii\base\InvalidConfigException;
 
@@ -24,14 +26,11 @@ use yii\base\InvalidConfigException;
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  *
- * @property array|\craft\commerce\base\Plan[] $allEnabledPlans
- * @property array|\craft\commerce\base\Plan[] $allPlans
+ * @property array|Plan[] $allEnabledPlans
+ * @property array|Plan[] $allPlans
  */
 class Plans extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
      * @event PlanEvent The event that is triggered when a plan is archived.
      *
@@ -84,8 +83,6 @@ class Plans extends Component
      */
     const EVENT_AFTER_SAVE_PLAN = 'afterSavePlan';
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns all subscription plans
@@ -97,17 +94,7 @@ class Plans extends Component
         $results = $this->_createPlansQuery()
             ->all();
 
-        $plans = [];
-
-        foreach ($results as $result) {
-            try {
-                $plans[] = $this->_populatePlan($result);
-            } catch (InvalidConfigException $exception) {
-                continue; // Just skip this
-            }
-        }
-
-        return $plans;
+        return $this->_populatePlans($results);
     }
 
     /**
@@ -118,20 +105,10 @@ class Plans extends Component
     public function getAllEnabledPlans(): array
     {
         $results = $this->_createPlansQuery()
-            ->where(['enabled' => true])
+            ->andWhere(['enabled' => true])
             ->all();
 
-        $sources = [];
-
-        foreach ($results as $result) {
-            try {
-                $sources[] = $this->_populatePlan($result);
-            } catch (InvalidConfigException $exception) {
-                continue; // Just skip this
-            }
-        }
-
-        return $sources;
+        return $this->_populatePlans($results);
     }
 
     /**
@@ -146,17 +123,7 @@ class Plans extends Component
             ->where(['gatewayId' => $gatewayId])
             ->all();
 
-        $plans = [];
-
-        foreach ($results as $result) {
-            try {
-                $plans[] = $this->_populatePlan($result);
-            } catch (InvalidConfigException $exception) {
-                continue; // Just skip this
-            }
-        }
-
-        return $plans;
+        return $this->_populatePlans($results);
     }
 
     /**
@@ -224,6 +191,21 @@ class Plans extends Component
     }
 
     /**
+     * Returns plans which use the provided Entry for its "information"
+     *
+     * @param int $entryId The Entry ID to search by
+     * @return Plan[]
+     */
+    public function getPlansByInformationEntryId(int $entryId): array
+    {
+        $results = $this->_createPlansQuery()
+            ->where(['planInformationId' => $entryId])
+            ->all();
+
+        return $this->_populatePlans($results);
+    }
+
+    /**
      * Save a subscription plan
      *
      * @param Plan $plan The payment source being saved.
@@ -231,13 +213,13 @@ class Plans extends Component
      * @return bool Whether the plan was saved successfully
      * @throws InvalidConfigException if subscription plan not found by id.
      */
-    public function savePlan(Plan $plan, bool $runValidation = true)
+    public function savePlan(Plan $plan, bool $runValidation = true): bool
     {
         if ($plan->id) {
             $record = PlanRecord::findOne($plan->id);
 
             if (!$record) {
-                throw new InvalidConfigException(Craft::t('commerce', 'No subscription plan exists with the ID “{id}”', ['id' => $plan->id]));
+                throw new InvalidConfigException(Plugin::t( 'No subscription plan exists with the ID “{id}”', ['id' => $plan->id]));
             }
         } else {
             $record = new PlanRecord();
@@ -265,6 +247,7 @@ class Plans extends Component
         $record->enabled = $plan->enabled;
         $record->isArchived = $plan->isArchived;
         $record->dateArchived = $plan->dateArchived;
+        $record->sortOrder = $plan->sortOrder ?? 99;
 
         // Save it!
         $record->save(false);
@@ -305,13 +288,29 @@ class Plans extends Component
         }
 
         $plan->isArchived = true;
-        $plan->dateArchived = Db::prepareDateForDb(new \DateTime());
+        $plan->dateArchived = Db::prepareDateForDb(new DateTime());
 
         return $this->savePlan($plan);
     }
 
-    // Private methods
-    // =========================================================================
+    /**
+     * Reorders subscription plans by ids.
+     *
+     * @param array $ids Array of plans.
+     * @return bool Always true.
+     */
+    public function reorderPlans(array $ids): bool
+    {
+        $command = Craft::$app->getDb()->createCommand();
+
+        foreach ($ids as $planOrder => $planId) {
+            $command->update(Table::PLANS, ['sortOrder' => $planOrder + 1], ['id' => $planId])->execute();
+        }
+
+        return true;
+    }
+
+
 
     /**
      * Returns a Query object prepped for retrieving gateways.
@@ -332,10 +331,33 @@ class Plans extends Component
                 'enabled',
                 'isArchived',
                 'dateArchived',
+                'sortOrder',
                 'uid'
             ])
             ->where(['isArchived' => false])
-            ->from(['{{%commerce_plans}}']);
+            ->orderBy(['sortOrder' => SORT_ASC])
+            ->from([Table::PLANS]);
+    }
+
+    /**
+     * Populate an array of plans from their database table rows
+     *
+     * @param array $results
+     * @return Plan[]
+     */
+    private function _populatePlans(array $results): array
+    {
+        $plans = [];
+
+        foreach ($results as $result) {
+            try {
+                $plans[] = $this->_populatePlan($result);
+            } catch (InvalidConfigException $exception) {
+                continue; // Just skip this
+            }
+        }
+
+        return $plans;
     }
 
     /**
@@ -347,7 +369,7 @@ class Plans extends Component
      */
     private function _populatePlan(array $result): Plan
     {
-        $gateway = Commerce::getInstance()->getGateways()->getGatewayById($result['gatewayId']);
+        $gateway = Plugin::getInstance()->getGateways()->getGatewayById($result['gatewayId']);
 
         if (!$gateway instanceof SubscriptionGateway) {
             throw new InvalidConfigException('This gateway does not support subscriptions');

@@ -13,6 +13,9 @@ use craft\commerce\elements\Order;
 use craft\commerce\elements\Subscription;
 use craft\commerce\Plugin;
 use craft\elements\User;
+use craft\helpers\UrlHelper;
+use DateInterval;
+use DateTime;
 use yii\base\InvalidConfigException;
 
 /**
@@ -29,11 +32,8 @@ use yii\base\InvalidConfigException;
  */
 class Customer extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
-     * @var int Customer ID
+     * @var int|null Customer ID
      */
     public $id;
 
@@ -57,8 +57,6 @@ class Customer extends Model
      */
     private $_user;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Returns the email address of the customer as the string output.
@@ -71,10 +69,25 @@ class Customer extends Model
     }
 
     /**
+     * @inheritdoc
+     */
+    public function extraFields()
+    {
+        return [
+            'user',
+            'email',
+            'addresses',
+            'orders',
+            'subscriptions',
+            'primaryBillingAddress',
+            'primaryShippingAddress',
+        ];
+    }
+
+    /**
      * Returns the user element associated with this customer.
      *
      * @return User|null
-     * @throws InvalidConfigException if [[userId]] is invalid
      */
     public function getUser()
     {
@@ -86,11 +99,9 @@ class Customer extends Model
             return null;
         }
 
-        if (($user = Craft::$app->getUsers()->getUserById($this->userId)) === null) {
-            throw new InvalidConfigException("Invalid user ID: {$this->userId}");
-        }
+        $this->_user = Craft::$app->getUsers()->getUserById($this->userId);
 
-        return $this->_user = $user;
+        return $this->_user;
     }
 
     /**
@@ -127,7 +138,11 @@ class Customer extends Model
      */
     public function getAddresses(): array
     {
-        return Plugin::getInstance()->getAddresses()->getAddressesByCustomerId($this->id);
+        if ($this->id) {
+            return Plugin::getInstance()->getAddresses()->getAddressesByCustomerId($this->id);
+        }
+
+        return [];
     }
 
     /**
@@ -149,13 +164,45 @@ class Customer extends Model
     }
 
     /**
+     * @return string
+     * @since 3.0
+     */
+    public function getCpEditUrl(): string
+    {
+        $id = $this->id ?? '';
+        return UrlHelper::cpUrl('commerce/customers/' . $id);
+    }
+
+    /**
      * Returns the order elements associated with this customer.
      *
      * @return Order[]
      */
     public function getOrders(): array
     {
-        return Order::find()->customer($this)->isCompleted(true)->all();
+        return Order::find()->customer($this)->isCompleted()->all();
+    }
+
+    /**
+     * @return array
+     * @throws \Exception
+     * @since 2.2
+     */
+    public function getActiveCarts(): array
+    {
+        $edge = Plugin::getInstance()->getCarts()->getActiveCartEdgeDuration();
+        return Order::find()->customer($this)->isCompleted(false)->dateUpdated('>= ' . $edge)->orderBy('dateUpdated DESC')->all();
+    }
+
+    /**
+     * @return array
+     * @throws \Exception
+     * @since 2.2
+     */
+    public function getInactiveCarts(): array
+    {
+        $edge = Plugin::getInstance()->getCarts()->getActiveCartEdgeDuration();
+        return Order::find()->customer($this)->isCompleted(false)->dateUpdated('< ' . $edge)->orderBy('dateUpdated ASC')->all();
     }
 
     /**

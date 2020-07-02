@@ -8,28 +8,27 @@
 namespace craft\commerce\services;
 
 use Craft;
-use craft\commerce\models\ShippingCategory;
+use craft\commerce\db\Table;
 use craft\commerce\models\ShippingRule;
 use craft\commerce\models\ShippingRuleCategory;
 use craft\commerce\Plugin;
 use craft\commerce\records\ShippingRule as ShippingRuleRecord;
 use craft\commerce\records\ShippingRuleCategory as ShippingRuleCategoryRecord;
 use craft\db\Query;
+use craft\helpers\Localization;
 use yii\base\Component;
 use yii\base\Exception;
 
 /**
  * Shipping rule service.
  *
- * @property array|ShippingRule[] $allShippingRules
+ * @property ShippingRule $liteShippingRule The lite shipping rule
+ * @property ShippingRule[] $allShippingRules
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class ShippingRules extends Component
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var bool
      */
@@ -45,8 +44,6 @@ class ShippingRules extends Component
      */
     private $_shippingRulesByMethodId = [];
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * Get all shipping rules.
@@ -134,7 +131,7 @@ class ShippingRules extends Component
             $record = ShippingRuleRecord::findOne($model->id);
 
             if (!$record) {
-                throw new Exception(Craft::t('commerce', 'No shipping rule exists with the ID “{id}”',
+                throw new Exception(Plugin::t( 'No shipping rule exists with the ID “{id}”',
                     ['id' => $model->id]));
             }
         } else {
@@ -163,7 +160,8 @@ class ShippingRules extends Component
             'weightRate',
             'percentageRate',
             'minRate',
-            'maxRate'
+            'maxRate',
+            'isLite'
         ];
         foreach ($fields as $field) {
             $record->$field = $model->$field;
@@ -190,15 +188,14 @@ class ShippingRules extends Component
 
         // Generate a rule category record for all categories regardless of data submitted
         foreach (Plugin::getInstance()->getShippingCategories()->getAllShippingCategories() as $shippingCategory) {
-            /** @var ShippingCategory $ruleCategory */
             if (isset($model->getShippingRuleCategories()[$shippingCategory->id]) && $ruleCategory = $model->getShippingRuleCategories()[$shippingCategory->id]) {
                 $ruleCategory = new ShippingRuleCategory([
                     'shippingRuleId' => $model->id,
                     'shippingCategoryId' => $shippingCategory->id,
                     'condition' => $ruleCategory->condition,
-                    'perItemRate' => is_numeric($ruleCategory->perItemRate) ? $ruleCategory->perItemRate : null,
-                    'weightRate' => is_numeric($ruleCategory->weightRate) ? $ruleCategory->weightRate : null,
-                    'percentageRate' => is_numeric($ruleCategory->percentageRate) ? $ruleCategory->percentageRate : null
+                    'perItemRate' => is_numeric($ruleCategory->perItemRate) ? Localization::normalizeNumber($ruleCategory->perItemRate) : null,
+                    'weightRate' => is_numeric($ruleCategory->weightRate) ? Localization::normalizeNumber($ruleCategory->weightRate) : null,
+                    'percentageRate' => is_numeric($ruleCategory->percentageRate) ? Localization::normalizeNumber($ruleCategory->percentageRate) : null
                 ]);
             } else {
                 $ruleCategory = new ShippingRuleCategory([
@@ -215,6 +212,49 @@ class ShippingRules extends Component
     }
 
     /**
+     * Save a shipping rule.
+     *
+     * @param ShippingRule $model
+     * @param bool $runValidation should we validate this rule before saving.
+     * @return bool
+     * @throws Exception
+     */
+    public function saveLiteShippingRule(ShippingRule $model, bool $runValidation = true): bool
+    {
+        $model->isLite = true;
+        $model->id = null;
+
+        // Delete the current lite shipping rule.
+        Craft::$app->getDb()->createCommand()
+            ->delete(ShippingRuleRecord::tableName(), ['isLite' => true])
+            ->execute();
+
+        return $this->saveShippingRule($model, $runValidation);
+    }
+
+    /**
+     * Gets the the lite shipping rule or returns a new one.
+     *
+     * @return ShippingRule
+     */
+    public function getLiteShippingRule(): ShippingRule
+    {
+        $liteRule = $this->_createShippingRulesQuery()->one();
+
+        if ($liteRule == null) {
+            $liteRule = new ShippingRule();
+            $liteRule->isLite = true;
+            $liteRule->name = 'Shipping Cost';
+            $liteRule->description = 'Shipping Cost';
+            $liteRule->enabled = true;
+        } else {
+            $liteRule = new ShippingRule($liteRule);
+        }
+
+        return $liteRule;
+    }
+
+    /**
      * Reorders shipping rules by the given array of IDs.
      *
      * @param array $ids
@@ -223,7 +263,7 @@ class ShippingRules extends Component
     public function reorderShippingRules(array $ids): bool
     {
         foreach ($ids as $sortOrder => $id) {
-            Craft::$app->getDb()->createCommand()->update('{{%commerce_shippingrules}}', ['priority' => $sortOrder + 1], ['id' => $id])->execute();
+            Craft::$app->getDb()->createCommand()->update(Table::SHIPPINGRULES, ['priority' => $sortOrder + 1], ['id' => $id])->execute();
         }
 
         return true;
@@ -246,8 +286,6 @@ class ShippingRules extends Component
         return false;
     }
 
-    // Private methods
-    // =========================================================================
     /**
      * Returns a Query object prepped for retrieving shipping rules.
      *
@@ -255,7 +293,7 @@ class ShippingRules extends Component
      */
     private function _createShippingRulesQuery(): Query
     {
-        return (new Query())
+        $query = (new Query())
             ->select([
                 'id',
                 'shippingZoneId',
@@ -276,8 +314,15 @@ class ShippingRules extends Component
                 'percentageRate',
                 'minRate',
                 'maxRate',
+                'isLite'
             ])
             ->orderBy('name')
-            ->from(['{{%commerce_shippingrules}}']);
+            ->from([Table::SHIPPINGRULES]);
+
+        if (Plugin::getInstance()->is(Plugin::EDITION_LITE)) {
+            $query->andWhere('[[isLite]] = true');
+        }
+
+        return $query;
     }
 }

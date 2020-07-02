@@ -10,6 +10,7 @@ namespace craft\commerce\models\responses;
 use Craft;
 use craft\commerce\base\RequestResponseInterface;
 use craft\commerce\models\payments\CreditCardPaymentForm;
+use craft\commerce\Plugin;
 
 /**
  * This is a dummy gateway request response.
@@ -21,12 +22,23 @@ class Dummy implements RequestResponseInterface
 {
     private $_success = true;
 
-    // Public Methods
-    // =========================================================================
 
     public function __construct(CreditCardPaymentForm $form = null)
     {
-        if ($form !== null && (substr($form->number, -1) % 2 === 1)) {
+        if ($form === null) {
+            $this->_success = false;
+            return;
+        }
+
+        // Token populated? This is a "payment source" so no need to fail anything
+        if ($form->token) {
+            return;
+        }
+
+        $number = (string)$form->number;
+        $isValid = (substr($number, -1) % 2 === 0);
+
+        if (!$isValid) {
             $this->_success = false;
         }
     }
@@ -92,7 +104,7 @@ class Dummy implements RequestResponseInterface
      */
     public function getMessage(): string
     {
-        return $this->_success ? '' : Craft::t('commerce', 'Payment failed.');
+        return $this->_success ? '' : Plugin::t('Dummy gateway payment failed.');
     }
 
     /**

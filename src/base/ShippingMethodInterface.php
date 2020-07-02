@@ -7,6 +7,8 @@
 
 namespace craft\commerce\base;
 
+use craft\commerce\elements\Order;
+
 /**
  * Interface ShippingMethod
  *
@@ -15,9 +17,6 @@ namespace craft\commerce\base;
  */
 interface ShippingMethodInterface
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * Returns the type of Shipping Method. This might be the name of the plugin or provider.
      * The core shipping methods have type: `Custom`. This is shown in the control panel only.
@@ -68,4 +67,26 @@ interface ShippingMethodInterface
      * @return bool
      */
     public function getIsEnabled(): bool;
+
+    /**
+     * @param Order $order
+     * @return float
+     */
+    public function getPriceForOrder(Order $order);
+
+    /**
+     * The first matching shipping rule for this shipping method
+     *
+     * @param Order $order
+     * @return null|ShippingRuleInterface
+     */
+    public function getMatchingShippingRule(Order $order);
+
+    /**
+     * Is this shipping method available to the order?
+     *
+     * @param Order $order
+     * @return bool
+     */
+    public function matchOrder(Order $order): bool;
 }

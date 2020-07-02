@@ -8,9 +8,13 @@
 namespace craft\commerce\services;
 
 use Craft;
+use craft\commerce\base\Purchasable;
 use craft\commerce\base\PurchasableInterface;
+use craft\commerce\db\Table;
 use craft\commerce\elements\Order;
+use craft\commerce\events\SaleEvent;
 use craft\commerce\events\SaleMatchEvent;
+use craft\commerce\helpers\Currency as CurrencyHelper;
 use craft\commerce\models\Sale;
 use craft\commerce\Plugin;
 use craft\commerce\records\Sale as SaleRecord;
@@ -19,8 +23,13 @@ use craft\commerce\records\SalePurchasable as SalePurchasableRecord;
 use craft\commerce\records\SaleUserGroup as SaleUserGroupRecord;
 use craft\db\Query;
 use craft\elements\Category;
+use DateTime;
+use Throwable;
 use yii\base\Component;
 use yii\base\Exception;
+use yii\db\StaleObjectException;
+use function get_class;
+use function in_array;
 
 /**
  * Sale service.
@@ -31,29 +40,112 @@ use yii\base\Exception;
  */
 class Sales extends Component
 {
-    // Constants
-    // =========================================================================
-
     /**
-     * @event SaleMatchEvent This event is raised after a sale has matched all other conditions
-     * You may set [[SaleMatchEvent::isValid]] to `false` to prevent the application of the matched sale.
+     * @event SaleMatchEvent The event that is triggered before Commerce attempts to match a sale to a purchasable.
      *
-     * Plugins can get notified when a purchasable matches a sale.
+     * The `isValid` event property can be set to `false` to prevent the application of the matched sale.
      *
      * ```php
      * use craft\commerce\events\SaleMatchEvent;
      * use craft\commerce\services\Sales;
+     * use craft\commerce\base\PurchasableInterface;
+     * use craft\commerce\models\Sale;
      * use yii\base\Event;
      *
-     * Event::on(Sales::class, Sales::EVENT_BEFORE_MATCH_PURCHASABLE_SALE, function(SaleMatchEvent $e) {
-     *      // Perhaps prevent the purchasable match with sale based on some business logic.
-     * });
+     * Event::on(
+     *     Sales::class,
+     *     Sales::EVENT_BEFORE_MATCH_PURCHASABLE_SALE,
+     *     function(SaleMatchEvent $event) {
+     *         // @var Sale $sale
+     *         $sale = $event->sale;
+     *         // @var PurchasableInterface $purchasable
+     *         $purchasable = $event->purchasable;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *
+     *         // Use custom business logic to exclude purchasable from sale
+     *         // with `$event->isValid = false`
+     *         // ...
+     *     }
+     * );
      * ```
      */
     const EVENT_BEFORE_MATCH_PURCHASABLE_SALE = 'beforeMatchPurchasableSale';
 
-    // Properties
-    // =========================================================================
+    /**
+     * @event SaleEvent The event that is triggered before a sale is saved.
+     * @since 2.2
+     *
+     * ```php
+     * use craft\commerce\events\SaleEvent;
+     * use craft\commerce\services\Sales;
+     * use craft\commerce\models\Sale;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     Sales::class,
+     *     Sales::EVENT_BEFORE_SAVE_SALE,
+     *     function(SaleEvent $event) {
+     *         // @var Sale $sale
+     *         $sale = $event->sale;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *         // ...
+     *     }
+     * );
+     * ```
+     */
+    const EVENT_BEFORE_SAVE_SALE = 'beforeSaveSale';
+
+    /**
+     * @event SaleEvent The event that is triggered after a sale is saved.
+     * @since 2.2
+     *
+     * ```php
+     * use craft\commerce\events\SaleEvent;
+     * use craft\commerce\services\Sales;
+     * use craft\commerce\models\Sale;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     Sales::class,
+     *     Sales::EVENT_BEFORE_SAVE_SALE,
+     *     function(SaleEvent $event) {
+     *         // @var Sale $sale
+     *         $sale = $event->sale;
+     *         // @var bool $isNew
+     *         $isNew = $event->isNew;
+     *         // ...
+     *     }
+     * );
+     * ```
+     */
+    const EVENT_AFTER_SAVE_SALE = 'afterSaveSale';
+
+    /**
+     * @event SaleEvent The event that is triggered after a sale is deleted.
+     *
+     * ```php
+     * use craft\commerce\events\SaleEvent;
+     * use craft\commerce\services\Sales;
+     * use craft\commerce\models\Sale;
+     * use yii\base\Event;
+     *
+     * Event::on(
+     *     Sales::class,
+     *     Sales::EVENT_AFTER_DELETE_SALE,
+     *     function(SaleEvent $event) {
+     *         // @var Sale $sale
+     *         $sale = $event->sale;
+     *
+     *         // do something
+     *         // ...
+     *     }
+     * );
+     * ```
+     */
+    const EVENT_AFTER_DELETE_SALE = 'afterDeleteSale';
+
 
     /**
      * @var Sale[]
@@ -65,8 +157,11 @@ class Sales extends Component
      */
     private $_allActiveSales;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var array
+     */
+    private $_purchasableSaleMatch = [];
+
 
     /**
      * Get a sale by its ID.
@@ -106,14 +201,15 @@ class Sales extends Component
                 sales.allGroups,
                 sales.allPurchasables,
                 sales.allCategories,
+                sales.categoryRelationshipType,
                 sales.enabled,
                 sp.purchasableId,
                 spt.categoryId,
                 sug.userGroupId')
-                ->from('{{%commerce_sales}} sales')
-                ->leftJoin('{{%commerce_sale_purchasables}} sp', '[[sp.saleId]] = [[sales.id]]')
-                ->leftJoin('{{%commerce_sale_categories}} spt', '[[spt.saleId]] = [[sales.id]]')
-                ->leftJoin('{{%commerce_sale_usergroups}} sug', '[[sug.saleId]] = [[sales.id]]')
+                ->from(Table::SALES . ' sales')
+                ->leftJoin(Table::SALE_PURCHASABLES . ' sp', '[[sp.saleId]] = [[sales.id]]')
+                ->leftJoin(Table::SALE_CATEGORIES . ' spt', '[[spt.saleId]] = [[sales.id]]')
+                ->leftJoin(Table::SALE_USERGROUPS . ' sug', '[[sug.saleId]] = [[sales.id]]')
                 ->orderBy('sortOrder asc')
                 ->all();
 
@@ -166,10 +262,10 @@ class Sales extends Component
             'sp.purchasableId,
             spt.categoryId,
             sug.userGroupId')
-            ->from('{{%commerce_sales}} sales')
-            ->leftJoin('{{%commerce_sale_purchasables}} sp', '[[sp.saleId]]=[[sales.id]]')
-            ->leftJoin('{{%commerce_sale_categories}} spt', '[[spt.saleId]]=[[sales.id]]')
-            ->leftJoin('{{%commerce_sale_usergroups}} sug', '[[sug.saleId]]=[[sales.id]]')
+            ->from(Table::SALES . ' sales')
+            ->leftJoin(Table::SALE_PURCHASABLES . ' sp', '[[sp.saleId]]=[[sales.id]]')
+            ->leftJoin(Table::SALE_CATEGORIES . ' spt', '[[spt.saleId]]=[[sales.id]]')
+            ->leftJoin(Table::SALE_USERGROUPS . ' sug', '[[sug.saleId]]=[[sales.id]]')
             ->where(['sales.id' => $sale->id])
             ->all();
 
@@ -208,13 +304,12 @@ class Sales extends Component
         $matchedSales = [];
 
         foreach ($this->_getAllEnabledSales() as $sale) {
-
             if ($this->matchPurchasableAndSale($purchasable, $sale, $order)) {
                 $matchedSales[] = $sale;
-            }
 
-            if ($sale->stopProcessing) {
-                break;
+                if ($sale->stopProcessing) {
+                    break;
+                }
             }
         }
 
@@ -229,12 +324,19 @@ class Sales extends Component
     public function getSalesRelatedToPurchasable(PurchasableInterface $purchasable): array
     {
         $sales = [];
+        $id = $purchasable->getId();
 
-        if ($purchasable->id) {
+        if ($id) {
             foreach ($this->getAllSales() as $sale) {
+                // Get related by product specifically
                 $purchasableIds = $sale->getPurchasableIds();
-                $id = $purchasable->getId();
-                if (\in_array($id, $purchasableIds, false)) {
+
+                // Get related via category
+                $relatedTo = [$sale->categoryRelationshipType => $purchasable->getPromotionRelationSource()];
+                $saleCategories = $sale->getCategoryIds();
+                $relatedCategories = Category::find()->id($saleCategories)->relatedTo($relatedTo)->ids();
+
+                if (in_array($id, $purchasableIds, false) || !empty($relatedCategories)) {
                     $sales[] = $sale;
                 }
             }
@@ -260,7 +362,6 @@ class Sales extends Component
 
         /** @var Sale $sale */
         foreach ($sales as $sale) {
-
             switch ($sale->apply) {
                 case SaleRecord::APPLY_BY_PERCENT:
                     // applyAmount is stored as a negative already
@@ -277,7 +378,8 @@ class Sales extends Component
                     // applyAmount is stored as a negative already
                     $takeOffAmount += $sale->applyAmount;
                     if ($sale->ignorePrevious) {
-                        $newPrice = $originalPrice - $sale->applyAmount;
+                        // applyAmount is always negative so add the negative amount to the original price for the new price.
+                        $newPrice = $originalPrice + $sale->applyAmount;
                     }
                     break;
                 case SaleRecord::APPLY_TO_FLAT:
@@ -304,7 +406,7 @@ class Sales extends Component
             $salePrice = 0;
         }
 
-        return $salePrice;
+        return CurrencyHelper::round($salePrice);
     }
 
     /**
@@ -317,29 +419,47 @@ class Sales extends Component
      */
     public function matchPurchasableAndSale(PurchasableInterface $purchasable, Sale $sale, Order $order = null): bool
     {
+        /** @var Purchasable $purchasable */
+        $purchasableId = $purchasable->id;
+        $saleId = $sale->id;
+
+        if (!isset($this->_purchasableSaleMatch[$purchasableId])) {
+            $this->_purchasableSaleMatch[$purchasableId] = [];
+        }
+
+        if (!isset($this->_purchasableSaleMatch[$purchasableId][$saleId])) {
+            $this->_purchasableSaleMatch[$purchasableId][$saleId] = null;
+        }
+
+        if ($this->_purchasableSaleMatch[$purchasableId][$saleId] !== null) {
+            return $this->_purchasableSaleMatch[$purchasableId][$saleId];
+        }
+
+        // default response is no match
+        $this->_purchasableSaleMatch[$purchasableId][$saleId] = false;
+
         // can't match something not promotable
         if (!$purchasable->getIsPromotable()) {
             return false;
         }
 
-        // Purchsable ID match
-        if (!$sale->allPurchasables && !\in_array($purchasable->getId(), $sale->getPurchasableIds(), false)) {
+        // Purchasable ID match
+        if (!$sale->allPurchasables && !in_array($purchasable->getId(), $sale->getPurchasableIds(), false)) {
             return false;
         }
 
         // Category match
-        $relatedTo = ['sourceElement' => $purchasable->getPromotionRelationSource()];
-        $relatedCategories = Category::find()->relatedTo($relatedTo)->ids();
-        $saleCategories = $sale->getCategoryIds();
-        $purchasableIsRelateToOneOrMoreCategories = (bool)array_intersect($relatedCategories, $saleCategories);
+        if (!$sale->allCategories) {
+            $relatedTo = [$sale->categoryRelationshipType => $purchasable->getPromotionRelationSource()];
+            $saleCategories = $sale->getCategoryIds();
+            $relatedCategories = Category::find()->id($saleCategories)->relatedTo($relatedTo)->ids();
 
-        if (!$sale->allCategories && !$purchasableIsRelateToOneOrMoreCategories) {
-            return false;
+            if (empty($relatedCategories)) {
+                return false;
+            }
         }
 
-
         if ($order) {
-
             $user = $order->getUser();
 
             if (!$sale->allGroups) {
@@ -356,22 +476,20 @@ class Sales extends Component
         }
 
         // Are we dealing with the current session outside of any cart/order context
-        if (!$order) {
-            if (!$sale->allGroups) {
-                // User groups of the currently logged in user
-                $userGroups = Plugin::getInstance()->getCustomers()->getUserGroupIdsForUser();
-                if (!$userGroups || !array_intersect($userGroups, $sale->getUserGroupIds())) {
-                    return false;
-                }
+        if (!$order && !$sale->allGroups) {
+            // User groups of the currently logged in user
+            $userGroups = Plugin::getInstance()->getCustomers()->getUserGroupIdsForUser();
+            if (!$userGroups || !array_intersect($userGroups, $sale->getUserGroupIds())) {
+                return false;
             }
         }
 
-        $date = new \DateTime();
+        $date = new DateTime();
 
         if ($order) {
             // Date we care about in the context of an order is the date the order was placed.
             // If the order is still a cart, use the current date time.
-            $date = $order->isCompleted ? $order->dateOrdered : new \DateTime();
+            $date = $order->isCompleted ? $order->dateOrdered : $date;
         }
 
         if ($sale->dateFrom && $sale->dateFrom >= $date) {
@@ -382,17 +500,15 @@ class Sales extends Component
             return false;
         }
 
-        $saleMatchEvent = new SaleMatchEvent([
-            'sale' => $sale,
-            'purchasable' => $purchasable
-        ]);
+        $saleMatchEvent = new SaleMatchEvent(compact('sale', 'purchasable'));
 
         // Raising the 'beforeMatchPurchasableSale' event
         if ($this->hasEventHandlers(self::EVENT_BEFORE_MATCH_PURCHASABLE_SALE)) {
             $this->trigger(self::EVENT_BEFORE_MATCH_PURCHASABLE_SALE, $saleMatchEvent);
         }
 
-        return $saleMatchEvent->isValid;
+        $this->_purchasableSaleMatch[$purchasableId][$saleId] = $saleMatchEvent->isValid;
+        return $this->_purchasableSaleMatch[$purchasableId][$saleId];
     }
 
     /**
@@ -406,15 +522,17 @@ class Sales extends Component
      */
     public function saveSale(Sale $model, bool $runValidation = true): bool
     {
-        if ($model->id) {
+        $isNewSale = !$model->id;
+
+        if ($isNewSale) {
+            $record = new SaleRecord();
+        } else {
             $record = SaleRecord::findOne($model->id);
 
             if (!$record) {
-                throw new Exception(Craft::t('commerce', 'No sale exists with the ID “{id}”',
+                throw new Exception(Plugin::t('No sale exists with the ID “{id}”',
                     ['id' => $model->id]));
             }
-        } else {
-            $record = new SaleRecord();
         }
 
         if ($runValidation && !$model->validate()) {
@@ -432,6 +550,7 @@ class Sales extends Component
             'applyAmount',
             'stopProcessing',
             'ignorePrevious',
+            'categoryRelationshipType',
             'enabled'
         ];
         foreach ($fields as $field) {
@@ -442,6 +561,13 @@ class Sales extends Component
         $record->allCategories = $model->allCategories = empty($model->getCategoryIds());
         $record->allPurchasables = $model->allPurchasables = empty($model->getPurchasableIds());
 
+        // Fire an 'beforeSaveSection' event
+        if ($this->hasEventHandlers(self::EVENT_BEFORE_SAVE_SALE)) {
+            $this->trigger(self::EVENT_BEFORE_SAVE_SALE, new SaleEvent([
+                'sale' => $model,
+                'isNew' => $isNewSale
+            ]));
+        }
 
         $db = Craft::$app->getDb();
         $transaction = $db->beginTransaction();
@@ -472,12 +598,22 @@ class Sales extends Component
                 $relation = new SalePurchasableRecord();
                 $relation->purchasableId = $purchasableId;
                 $purchasable = Craft::$app->getElements()->getElementById($purchasableId);
-                $relation->purchasableType = \get_class($purchasable);
+                $relation->purchasableType = get_class($purchasable);
                 $relation->saleId = $model->id;
                 $relation->save();
             }
 
             $transaction->commit();
+
+            $this->_clearCaches();
+
+            // Fire an 'beforeSaveSection' event
+            if ($this->hasEventHandlers(self::EVENT_AFTER_SAVE_SALE)) {
+                $this->trigger(self::EVENT_AFTER_SAVE_SALE, new SaleEvent([
+                    'sale' => $model,
+                    'isNew' => $isNewSale
+                ]));
+            }
 
             return true;
         } catch (\Exception $e) {
@@ -496,9 +632,11 @@ class Sales extends Component
     {
         foreach ($ids as $sortOrder => $id) {
             Craft::$app->getDb()->createCommand()
-                ->update('{{%commerce_sales}}', ['sortOrder' => $sortOrder + 1], ['id' => $id])
+                ->update(Table::SALES, ['sortOrder' => $sortOrder + 1], ['id' => $id])
                 ->execute();
         }
+
+        $this->_clearCaches();
 
         return true;
     }
@@ -509,22 +647,34 @@ class Sales extends Component
      * @param $id
      * @return bool
      * @throws \Exception
-     * @throws \Throwable
-     * @throws \yii\db\StaleObjectException
+     * @throws Throwable
+     * @throws StaleObjectException
      */
     public function deleteSaleById($id): bool
     {
-        $sale = SaleRecord::findOne($id);
+        $saleRecord = SaleRecord::findOne($id);
 
-        if ($sale) {
-            return $sale->delete();
+        if (!$saleRecord) {
+            return false;
         }
 
-        return false;
+        $sale = $this->getSaleById($saleRecord->id);
+
+        $this->_clearCaches();
+        $result = (bool)$saleRecord->delete();
+
+        //Raise the afterDeleteSale event
+        if ($result && $this->hasEventHandlers(self::EVENT_AFTER_DELETE_SALE)) {
+            $this->trigger(self::EVENT_AFTER_DELETE_SALE, new SaleEvent([
+                'sale' => $sale,
+                'isNew' => false
+            ]));
+        }
+
+
+        return $result;
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * Get all enabled sales.
@@ -546,5 +696,17 @@ class Sales extends Component
         }
 
         return $this->_allActiveSales;
+    }
+
+    /**
+     * Clear memoization caches
+     *
+     * @since 3.1.4
+     */
+    private function _clearCaches()
+    {
+        $this->_allActiveSales = null;
+        $this->_allSales = null;
+        $this->_purchasableSaleMatch = [];
     }
 }

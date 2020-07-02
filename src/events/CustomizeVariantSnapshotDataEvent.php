@@ -7,6 +7,7 @@
 
 namespace craft\commerce\events;
 
+use craft\commerce\elements\Variant;
 use yii\base\Event;
 
 /**
@@ -17,9 +18,6 @@ use yii\base\Event;
  */
 class CustomizeVariantSnapshotDataEvent extends Event
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var Variant The variant
      */

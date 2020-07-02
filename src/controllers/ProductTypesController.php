@@ -8,11 +8,14 @@
 namespace craft\commerce\controllers;
 
 use Craft;
+use craft\behaviors\FieldLayoutBehavior;
 use craft\commerce\elements\Product;
 use craft\commerce\elements\Variant;
 use craft\commerce\models\ProductType;
 use craft\commerce\models\ProductTypeSite;
 use craft\commerce\Plugin;
+use Throwable;
+use yii\web\BadRequestHttpException;
 use yii\web\HttpException;
 use yii\web\Response;
 
@@ -24,9 +27,6 @@ use yii\web\Response;
  */
 class ProductTypesController extends BaseAdminController
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @return Response
      */
@@ -44,10 +44,7 @@ class ProductTypesController extends BaseAdminController
      */
     public function actionEditProductType(int $productTypeId = null, ProductType $productType = null): Response
     {
-        $variables = [
-            'productTypeId' => $productTypeId,
-            'productType' => $productType,
-        ];
+        $variables = compact('productTypeId', 'productType');
 
         $variables['brandNewProductType'] = false;
 
@@ -68,21 +65,26 @@ class ProductTypesController extends BaseAdminController
         if (!empty($variables['productTypeId'])) {
             $variables['title'] = $variables['productType']->name;
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a Product Type');
+            $variables['title'] = Plugin::t('Create a Product Type');
         }
 
         $tabs = [
             'productTypeSettings' => [
-                'label' => Craft::t('commerce', 'Settings'),
+                'label' => Plugin::t('Settings'),
                 'url' => '#product-type-settings',
             ],
+            'taxAndShipping' => [
+                'label' => Plugin::t('Tax & Shipping'),
+                'url' => '#tax-and-shipping',
+            ],
             'productFields' => [
-                'label' => Craft::t('commerce', 'Product Fields'),
+                'label' => Plugin::t('Product Fields'),
                 'url' => '#product-fields',
             ],
             'variantFields' => [
-                'label' => Craft::t('commerce', 'Variant Fields'),
+                'label' => Plugin::t('Variant Fields'),
                 'url' => '#variant-fields',
+                'class' => ($variables['productType']->hasVariants ? '' : 'hidden')
             ]
         ];
 
@@ -94,15 +96,15 @@ class ProductTypesController extends BaseAdminController
 
     /**
      * @throws HttpException
-     * @throws \Throwable
-     * @throws \yii\web\BadRequestHttpException
+     * @throws Throwable
+     * @throws BadRequestHttpException
      */
     public function actionSaveProductType()
     {
         $currentUser = Craft::$app->getUser()->getIdentity();
 
         if (!$currentUser->can('manageCommerce')) {
-            throw new HttpException(403, Craft::t('commerce', 'This action is not allowed for the current user.'));
+            throw new HttpException(403, Plugin::t('This action is not allowed for the current user.'));
         }
 
         $request = Craft::$app->getRequest();
@@ -118,6 +120,8 @@ class ProductTypesController extends BaseAdminController
         $productType->hasVariants = (bool)Craft::$app->getRequest()->getBodyParam('hasVariants');
         $productType->hasVariantTitleField = (bool)$productType->hasVariants ? (bool)Craft::$app->getRequest()->getBodyParam('hasVariantTitleField') : false;
         $productType->titleFormat = Craft::$app->getRequest()->getBodyParam('titleFormat');
+        $productType->titleLabel = Craft::$app->getRequest()->getBodyParam('titleLabel', $productType->titleLabel);
+        $productType->variantTitleLabel = Craft::$app->getRequest()->getBodyParam('variantTitleLabel', $productType->variantTitleLabel);
         $productType->skuFormat = Craft::$app->getRequest()->getBodyParam('skuFormat');
         $productType->descriptionFormat = Craft::$app->getRequest()->getBodyParam('descriptionFormat');
 
@@ -144,25 +148,25 @@ class ProductTypesController extends BaseAdminController
 
         $productType->setSiteSettings($allSiteSettings);
 
-        $productType->setTaxCategories(Craft::$app->getRequest()->getBodyParam('taxCategories'));
-        $productType->setShippingCategories(Craft::$app->getRequest()->getBodyParam('shippingCategories'));
-
         // Set the product type field layout
         $fieldLayout = Craft::$app->getFields()->assembleLayoutFromPost();
         $fieldLayout->type = Product::class;
-        $productType->getBehavior('productFieldLayout')->setFieldLayout($fieldLayout);
+        /** @var FieldLayoutBehavior $behavior */
+        $behavior = $productType->getBehavior('productFieldLayout');
+        $behavior->setFieldLayout($fieldLayout);
 
         // Set the variant field layout
         $variantFieldLayout = Craft::$app->getFields()->assembleLayoutFromPost('variant-layout');
         $variantFieldLayout->type = Variant::class;
-        $productType->getBehavior('variantFieldLayout')->setFieldLayout($variantFieldLayout);
+        $behavior = $productType->getBehavior('variantFieldLayout');
+        $behavior->setFieldLayout($variantFieldLayout);
 
         // Save it
         if (Plugin::getInstance()->getProductTypes()->saveProductType($productType)) {
-            Craft::$app->getSession()->setNotice(Craft::t('commerce', 'Product type saved.'));
+            Craft::$app->getSession()->setNotice(Plugin::t('Product type saved.'));
             $this->redirectToPostedUrl($productType);
         } else {
-            Craft::$app->getSession()->setError(Craft::t('commerce', 'Couldn’t save product type.'));
+            Craft::$app->getSession()->setError(Plugin::t('Couldn’t save product type.'));
         }
 
         // Send the productType back to the template
@@ -173,8 +177,8 @@ class ProductTypesController extends BaseAdminController
 
     /**
      * @return Response
-     * @throws \Throwable
-     * @throws \yii\web\BadRequestHttpException
+     * @throws Throwable
+     * @throws BadRequestHttpException
      */
     public function actionDeleteProductType(): Response
     {

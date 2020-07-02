@@ -22,9 +22,6 @@ use yii\base\InvalidConfigException;
  */
 class State extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -45,17 +42,27 @@ class State extends Model
      */
     public $countryId;
 
-    // Public Methods
-    // =========================================================================
+    /**
+     * @var bool Is Enabled
+     */
+    public $enabled;
+
+    /**
+     * @var int Ordering
+     */
+    public $sortOrder;
+
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [['countryId', 'name', 'abbreviation'], 'required']
-        ];
+        $rules = parent::defineRules();
+
+        $rules[] = [['countryId', 'name', 'abbreviation'], 'required'];
+        
+        return $rules;
     }
 
     /**
@@ -63,7 +70,7 @@ class State extends Model
      */
     public function getCpEditUrl(): string
     {
-        return UrlHelper::cpUrl('commerce/settings/states/' . $this->id);
+        return UrlHelper::cpUrl('commerce/store-settings/states/' . $this->id);
     }
 
     /**

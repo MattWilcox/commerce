@@ -12,6 +12,7 @@ use craft\commerce\models\OrderStatus;
 use craft\commerce\Plugin;
 use craft\helpers\ArrayHelper;
 use craft\helpers\Json;
+use yii\web\BadRequestHttpException;
 use yii\web\HttpException;
 use yii\web\Response;
 
@@ -23,9 +24,6 @@ use yii\web\Response;
  */
 class OrderStatusesController extends BaseAdminController
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @return Response
      */
@@ -44,10 +42,7 @@ class OrderStatusesController extends BaseAdminController
      */
     public function actionEdit(int $id = null, OrderStatus $orderStatus = null): Response
     {
-        $variables = [
-            'id' => $id,
-            'orderStatus' => $orderStatus
-        ];
+        $variables = compact('id', 'orderStatus');
 
         if (!$variables['orderStatus']) {
             if ($variables['id']) {
@@ -64,7 +59,7 @@ class OrderStatusesController extends BaseAdminController
         if ($variables['orderStatus']->id) {
             $variables['title'] = $variables['orderStatus']->name;
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a new order status');
+            $variables['title'] = Plugin::t('Create a new order status');
         }
 
         $emails = Plugin::getInstance()->getEmails()->getAllEmails();
@@ -87,6 +82,7 @@ class OrderStatusesController extends BaseAdminController
         $orderStatus->name = Craft::$app->getRequest()->getBodyParam('name');
         $orderStatus->handle = Craft::$app->getRequest()->getBodyParam('handle');
         $orderStatus->color = Craft::$app->getRequest()->getBodyParam('color');
+        $orderStatus->description = Craft::$app->getRequest()->getBodyParam('description');
         $orderStatus->default = (bool)Craft::$app->getRequest()->getBodyParam('default');
         $emailIds = Craft::$app->getRequest()->getBodyParam('emails', []);
 
@@ -96,10 +92,10 @@ class OrderStatusesController extends BaseAdminController
 
         // Save it
         if (Plugin::getInstance()->getOrderStatuses()->saveOrderStatus($orderStatus, $emailIds)) {
-            Craft::$app->getSession()->setNotice(Craft::t('commerce', 'Order status saved.'));
+            Craft::$app->getSession()->setNotice(Plugin::t('Order status saved.'));
             $this->redirectToPostedUrl($orderStatus);
         } else {
-            Craft::$app->getSession()->setError(Craft::t('commerce', 'Couldn’t save order status.'));
+            Craft::$app->getSession()->setError(Plugin::t('Couldn’t save order status.'));
         }
 
         Craft::$app->getUrlManager()->setRouteParams(compact('orderStatus', 'emailIds'));
@@ -112,17 +108,20 @@ class OrderStatusesController extends BaseAdminController
     {
         $this->requirePostRequest();
         $this->requireAcceptsJson();
-
         $ids = Json::decode(Craft::$app->getRequest()->getRequiredBodyParam('ids'));
+
         if ($success = Plugin::getInstance()->getOrderStatuses()->reorderOrderStatuses($ids)) {
             return $this->asJson(['success' => $success]);
         }
 
-        return $this->asJson(['error' => Craft::t('commerce', 'Couldn’t reorder Order Statuses.')]);
+        return $this->asJson(['error' => Plugin::t('Couldn’t reorder Order Statuses.')]);
     }
 
     /**
      * @return Response|null
+     * @throws \Throwable
+     * @throws BadRequestHttpException
+     * @since 2.2
      */
     public function actionDelete()
     {
@@ -130,10 +129,10 @@ class OrderStatusesController extends BaseAdminController
 
         $orderStatusId = Craft::$app->getRequest()->getRequiredParam('id');
 
-        if (Plugin::getInstance()->getOrderStatuses()->deleteOrderStatusById($orderStatusId)) {
+        if (Plugin::getInstance()->getOrderStatuses()->deleteOrderStatusById((int)$orderStatusId)) {
             return $this->asJson(['success' => true]);
         }
 
-        return null;
+        return $this->asJson(['error' => Plugin::t('Couldn’t archive Order Status.')]);
     }
 }

@@ -10,7 +10,9 @@ namespace craft\commerce\models;
 use Craft;
 use craft\commerce\base\Model;
 use craft\commerce\Plugin;
+use craft\commerce\records\Sale as SaleRecord;
 use craft\helpers\UrlHelper;
+use DateTime;
 
 /**
  * Sale model.
@@ -26,9 +28,6 @@ use craft\helpers\UrlHelper;
  */
 class Sale extends Model
 {
-    // Properties
-    // =========================================================================
-
     /**
      * @var int ID
      */
@@ -45,12 +44,12 @@ class Sale extends Model
     public $description;
 
     /**
-     * @var \DateTime|null Date From
+     * @var DateTime|null Date From
      */
     public $dateFrom;
 
     /**
-     * @var \DateTime|null Date To
+     * @var DateTime|null Date To
      */
     public $dateTo;
 
@@ -90,6 +89,11 @@ class Sale extends Model
     public $allCategories = false;
 
     /**
+     * @var string Type of relationship between Categories and Products
+     */
+    public $categoryRelationshipType;
+
+    /**
      * @var bool Enabled
      */
     public $enabled = true;
@@ -102,7 +106,7 @@ class Sale extends Model
     /**
      * @var int[] Product Ids
      */
-    private $_purchsableIds;
+    private $_purchasableIds;
 
     /**
      * @var int[] Product Type IDs
@@ -114,28 +118,35 @@ class Sale extends Model
      */
     private $_userGroupIds;
 
-    // Public Methods
-    // =========================================================================
 
     /**
      * @inheritdoc
      */
-    public function rules()
+    public function defineRules(): array
     {
-        return [
-            [
-                ['apply'],
-                'in',
-                'range' => [
-                    'toPercent',
-                    'toFlat',
-                    'byPercent',
-                    'byFlat'
-                ],
-            ],
-            [['enabled'], 'boolean'],
-            [['name', 'apply', 'allGroups', 'allPurchasables', 'allCategories'], 'required'],
+        $rules = parent::defineRules();
+
+        $rules[] = [
+            ['apply'],
+            'in',
+            'range' => [
+                'toPercent',
+                'toFlat',
+                'byPercent',
+                'byFlat'
+            ]
         ];
+        $rules[] = [
+            ['categoryRelationshipType'], 'in', 'range' => [
+                SaleRecord::CATEGORY_RELATIONSHIP_TYPE_SOURCE,
+                SaleRecord::CATEGORY_RELATIONSHIP_TYPE_TARGET,
+                SaleRecord::CATEGORY_RELATIONSHIP_TYPE_BOTH
+            ]
+        ];
+        $rules[] = [['enabled'], 'boolean'];
+        $rules[] = [['name', 'apply', 'allGroups', 'allPurchasables', 'allCategories'], 'required'];
+
+        return $rules;
     }
 
     /**
@@ -167,7 +178,6 @@ class Sale extends Model
             $number = rtrim($string, '0');
             $diff = strlen($string) - strlen($number);
             return Craft::$app->formatter->asPercent(-$this->applyAmount, 2 - $diff);
-            return Craft::$app->formatter->asPercent(-$this->applyAmount);
         }
 
         return Craft::$app->formatter->asPercent(0);
@@ -198,11 +208,11 @@ class Sale extends Model
      */
     public function getPurchasableIds(): array
     {
-        if (null === $this->_purchsableIds) {
+        if (null === $this->_purchasableIds) {
             $this->_loadRelations();
         }
 
-        return $this->_purchsableIds;
+        return $this->_purchasableIds;
     }
 
     /**
@@ -234,7 +244,7 @@ class Sale extends Model
      */
     public function setPurchasableIds(array $purchasableIds)
     {
-        $this->_purchsableIds = array_unique($purchasableIds);
+        $this->_purchasableIds = array_unique($purchasableIds);
     }
 
     /**
@@ -247,8 +257,6 @@ class Sale extends Model
         $this->_userGroupIds = array_unique($userGroupIds);
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * Loads the sale relations

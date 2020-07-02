@@ -13,6 +13,7 @@ use craft\commerce\Plugin;
 use craft\commerce\records\ShippingRuleCategory;
 use craft\helpers\ArrayHelper;
 use craft\helpers\Json;
+use craft\helpers\Localization;
 use yii\web\HttpException;
 use yii\web\Response;
 
@@ -24,19 +25,6 @@ use yii\web\Response;
  */
 class ShippingRulesController extends BaseShippingSettingsController
 {
-    // Public Methods
-    // =========================================================================
-
-    /**
-     * @return Response
-     */
-    public function actionIndex(): Response
-    {
-        $methodsExist = Plugin::getInstance()->getShippingMethods()->ShippingMethodExists();
-        $shippingRules = Plugin::getInstance()->getShippingRules()->getAllShippingRules();
-        return $this->renderTemplate('commerce/settings/shippingrules/index', compact('shippingRules', 'methodsExist'));
-    }
-
     /**
      * @param int|null $methodId
      * @param int|null $ruleId
@@ -46,11 +34,7 @@ class ShippingRulesController extends BaseShippingSettingsController
      */
     public function actionEdit(int $methodId = null, int $ruleId = null, ShippingRule $shippingRule = null): Response
     {
-        $variables = [
-            'methodId' => $methodId,
-            'ruleId' => $ruleId,
-            'shippingRule' => $shippingRule,
-        ];
+        $variables = compact('methodId', 'ruleId', 'shippingRule');
 
         $plugin = Plugin::getInstance();
         $variables['shippingMethod'] = $plugin->getShippingMethods()->getShippingMethodById($variables['methodId']);
@@ -71,18 +55,18 @@ class ShippingRulesController extends BaseShippingSettingsController
             }
         }
 
-        $variables['countries'] = ['' => ''] + $plugin->getCountries()->getAllCountriesAsList();
-        $variables['states'] = $plugin->getStates()->getAllStatesAsList();
+        // TODO: check if the following two lines can be removed
+        // $variables['countries'] = ['' => ''] + $plugin->getCountries()->getAllCountriesAsList();
+        // $variables['states'] = $plugin->getStates()->getAllStatesAsList();
 
         $this->getView()->setNamespace('new');
 
         $this->getView()->startJsBuffer();
-        $countries = $plugin->getCountries()->getAllCountries();
-        $states = $plugin->getStates()->getAllStates();
+
         $variables['newShippingZoneFields'] = $this->getView()->namespaceInputs(
-            $this->getView()->renderTemplate('commerce/settings/shippingzones/_fields', [
-                'countries' => ArrayHelper::map($countries, 'id', 'name'),
-                'states' => ArrayHelper::map($states, 'id', 'name'),
+            $this->getView()->renderTemplate('commerce/shipping/shippingzones/_fields', [
+                'countries' => $plugin->getCountries()->getAllEnabledCountriesAsList(),
+                'states' => $plugin->getStates()->getAllEnabledStatesAsList(),
             ])
         );
         $variables['newShippingZoneJs'] = $this->getView()->clearJsBuffer(false);
@@ -90,7 +74,7 @@ class ShippingRulesController extends BaseShippingSettingsController
         if (!empty($variables['ruleId'])) {
             $variables['title'] = $variables['shippingRule']->name;
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a new shipping rule');
+            $variables['title'] = Plugin::t('Create a new shipping rule');
         }
 
         $shippingZones = $plugin->getShippingZones()->getAllShippingZones();
@@ -101,11 +85,33 @@ class ShippingRulesController extends BaseShippingSettingsController
         }
 
         $variables['categoryShippingOptions'] = [];
-        $variables['categoryShippingOptions'][] = ['label' => Craft::t('commerce', 'Allow'), 'value' => ShippingRuleCategory::CONDITION_ALLOW];
-        $variables['categoryShippingOptions'][] = ['label' => Craft::t('commerce', 'Disallow'), 'value' => ShippingRuleCategory::CONDITION_DISALLOW];
-        $variables['categoryShippingOptions'][] = ['label' => Craft::t('commerce', 'Require'), 'value' => ShippingRuleCategory::CONDITION_REQUIRE];
+        $variables['categoryShippingOptions'][] = ['label' => Plugin::t('Allow'), 'value' => ShippingRuleCategory::CONDITION_ALLOW];
+        $variables['categoryShippingOptions'][] = ['label' => Plugin::t('Disallow'), 'value' => ShippingRuleCategory::CONDITION_DISALLOW];
+        $variables['categoryShippingOptions'][] = ['label' => Plugin::t('Require'), 'value' => ShippingRuleCategory::CONDITION_REQUIRE];
 
-        return $this->renderTemplate('commerce/settings/shippingrules/_edit', $variables);
+        if ($variables['shippingRule'] && $variables['shippingRule'] instanceof ShippingRule) {
+            // Localize numbers
+            $localizeAttributes = [
+                'minTotal',
+                'maxTotal',
+                'minWeight',
+                'maxWeight',
+                'baseRate',
+                'perItemRate',
+                'weightRate',
+                'percentageRate',
+                'minRate',
+                'maxRate',
+            ];
+
+            foreach ($localizeAttributes as $attr) {
+                if (isset($variables['shippingRule']->{$attr}) && $variables['shippingRule']->{$attr} !== null) {
+                    $variables['shippingRule']->{$attr} = Craft::$app->getFormatter()->asDecimal((float)$variables['shippingRule']->{$attr});
+                }
+            }
+        }
+
+        return $this->renderTemplate('commerce/shipping/shippingrules/_edit', $variables);
     }
 
     /**
@@ -115,16 +121,28 @@ class ShippingRulesController extends BaseShippingSettingsController
     {
         $this->requirePostRequest();
 
+        $request = Craft::$app->getRequest();
+
         $shippingRule = new ShippingRule();
 
-        // Shared attributes
-        $fields = [
-            'id', 'name', 'description', 'shippingZoneId', 'methodId', 'enabled', 'minQty', 'maxQty', 'minTotal', 'maxTotal',
-            'minWeight', 'maxWeight', 'baseRate', 'perItemRate', 'weightRate', 'percentageRate', 'minRate', 'maxRate'
-        ];
-        foreach ($fields as $field) {
-            $shippingRule->$field = Craft::$app->getRequest()->getBodyParam($field);
-        }
+        $shippingRule->id = $request->getBodyParam('id');
+        $shippingRule->name = $request->getBodyParam('name');
+        $shippingRule->description = $request->getBodyParam('description');
+        $shippingRule->shippingZoneId = $request->getBodyParam('shippingZoneId');
+        $shippingRule->methodId = $request->getBodyParam('methodId');
+        $shippingRule->enabled = (bool)$request->getBodyParam('enabled');
+        $shippingRule->minQty = $request->getBodyParam('minQty');
+        $shippingRule->maxQty = $request->getBodyParam('maxQty');
+        $shippingRule->minTotal = Localization::normalizeNumber($request->getBodyParam('minTotal'));
+        $shippingRule->maxTotal = Localization::normalizeNumber($request->getBodyParam('maxTotal'));
+        $shippingRule->minWeight = Localization::normalizeNumber($request->getBodyParam('minWeight'));
+        $shippingRule->maxWeight = Localization::normalizeNumber($request->getBodyParam('maxWeight'));
+        $shippingRule->baseRate = Localization::normalizeNumber($request->getBodyParam('baseRate'));
+        $shippingRule->perItemRate = Localization::normalizeNumber($request->getBodyParam('perItemRate'));
+        $shippingRule->weightRate = Localization::normalizeNumber($request->getBodyParam('weightRate'));
+        $shippingRule->percentageRate = Localization::normalizeNumber($request->getBodyParam('percentageRate'));
+        $shippingRule->minRate = Localization::normalizeNumber( $request->getBodyParam('minRate'));
+        $shippingRule->maxRate = Localization::normalizeNumber($request->getBodyParam('maxRate'));
 
         $ruleCategories = [];
         $allRulesCategories = Craft::$app->getRequest()->getBodyParam('ruleCategories');
@@ -137,10 +155,10 @@ class ShippingRulesController extends BaseShippingSettingsController
 
         // Save it
         if (Plugin::getInstance()->getShippingRules()->saveShippingRule($shippingRule)) {
-            Craft::$app->getSession()->setNotice(Craft::t('commerce', 'Shipping rule saved.'));
+            Craft::$app->getSession()->setNotice(Plugin::t('Shipping rule saved.'));
             $this->redirectToPostedUrl($shippingRule);
         } else {
-            Craft::$app->getSession()->setError(Craft::t('commerce', 'Couldn’t save shipping rule.'));
+            Craft::$app->getSession()->setError(Plugin::t('Couldn’t save shipping rule.'));
         }
 
         // Send the model back to the template
@@ -176,6 +194,6 @@ class ShippingRulesController extends BaseShippingSettingsController
             return $this->asJson(['success' => true]);
         }
 
-        return $this->asErrorJson(Craft::t('commerce', 'Could not delete shipping rule'));
+        return $this->asErrorJson(Plugin::t('Could not delete shipping rule'));
     }
 }

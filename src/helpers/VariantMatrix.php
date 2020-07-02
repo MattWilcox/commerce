@@ -12,6 +12,7 @@ use craft\commerce\elements\Product as ProductElement;
 use craft\commerce\elements\Variant;
 use craft\commerce\web\assets\variantmatrix\VariantMatrixAsset;
 use craft\helpers\Json;
+use craft\web\View;
 
 /**
  * Class VariantMatrix
@@ -21,9 +22,6 @@ use craft\helpers\Json;
  */
 class VariantMatrix
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * Returns the HTML for a given product’s variant matrix.
      *
@@ -33,14 +31,15 @@ class VariantMatrix
      */
     public static function getVariantMatrixHtml(ProductElement $product, $name = 'variants'): string
     {
-        /** @var \craft\web\View $viewService */
+        /** @var View $viewService */
         $viewService = Craft::$app->getView();
         $id = $viewService->formatInputId($name);
 
         $html = $viewService->renderTemplate('commerce/products/_variant_matrix', [
             'id' => $id,
             'name' => $name,
-            'variants' => $product->getVariants()
+            'variants' => $product->getVariants(),
+            'product' => $product
         ]);
 
         // Namespace the name/ID for JS
@@ -61,8 +60,6 @@ class VariantMatrix
         return $html;
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * Returns info about each variant field type for a variant matrix.
@@ -73,7 +70,6 @@ class VariantMatrix
      */
     private static function _getVariantFieldHtml($product, $name): array
     {
-
         $variant = new Variant();
         $variant->setProduct($product);
 
@@ -88,7 +84,8 @@ class VariantMatrix
 
         $bodyHtml = $templatesService->renderTemplate('commerce/products/_variant_matrix_fields', [
             'namespace' => $name . '[__VARIANT__]',
-            'variant' => $variant
+            'variant' => $variant,
+            'product' => $product
         ]);
 
         $footHtml = $templatesService->clearJsBuffer();

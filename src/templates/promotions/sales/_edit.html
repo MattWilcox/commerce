@@ -42,7 +42,7 @@
         {{ forms.textField({
             first: true,
             label: "Name"|t('commerce'),
-            instructions: "What this sale will be called in the CP."|t('commerce'),
+            instructions: "What this sale will be called in the control panel."|t('commerce'),
             id: 'name',
             name: 'name',
             value: sale.name,
@@ -60,11 +60,12 @@
             errors: sale.getErrors('description'),
         }) }}
 
-        {{ forms.checkboxField({
+        {{ forms.lightSwitchField({
             label: "Enable this sale"|t('commerce'),
             id: 'enabled',
             name: 'enabled',
             value: 1,
+            on: sale.enabled,
             checked: sale.enabled,
             errors: sale.getErrors('enabled'),
             instructions: 'Whether this sale should be available for use, regardless of other conditions.'|t('commerce')
@@ -105,7 +106,7 @@
             {% endif %}
 
             {% for purchasableType in purchasableTypes %}
-                {% set instruction = "for which this sale will be applicable to. Leave all purchsable fields blank for any purchsable."|t('commerce') %}
+                {% set instruction = "Purchasables for which this sale will be applicable to. Leave all purchasable fields blank for any purchasable."|t('commerce') %}
                 {{ forms.elementSelectField({
                     id: 'purchasables-'~purchasableType.elementType|id,
                     label: purchasableType.name,
@@ -127,6 +128,16 @@
                 limit: null,
                 instructions: "Categories that the purchasables must be related to. Leave blank for all categories."|t('commerce'),
                 errors: sale.getErrors('categories'),
+            }) }}
+
+            {{ forms.selectField({
+                id: 'categoryRelationshipType',
+                name: 'categoryRelationshipType',
+                label: 'Categories Relationship Type'|t('commerce'),
+                instructions: "This determines how the Products and Categories are related to match the sale. See [Relations Terminology](https://docs.craftcms.com/v3/relations.html#terminology)."|t('commerce'),
+                options: categoryRelationshipType,
+                value: sale.categoryRelationshipType,
+                errors: sale.getErrors('categoryRelationshipType')
             }) }}
         </div>
 

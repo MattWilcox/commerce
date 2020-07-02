@@ -19,9 +19,6 @@ use craft\web\View;
  */
 class VariantMatrixAsset extends AssetBundle
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
@@ -48,7 +45,7 @@ class VariantMatrixAsset extends AssetBundle
         parent::registerAssetFiles($view);
 
         if ($view instanceof View) {
-            $view->registerTranslations('app', [
+            $view->registerTranslations('commerce', [
                 'Actions',
                 'Add a variant',
                 'Add variant above',

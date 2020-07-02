@@ -7,6 +7,7 @@
 
 namespace craft\commerce\records;
 
+use craft\commerce\db\Table;
 use craft\db\ActiveRecord;
 use yii\db\ActiveQueryInterface;
 
@@ -17,26 +18,24 @@ use yii\db\ActiveQueryInterface;
  * @property string $description
  * @property int $id
  * @property bool $included
- * @property int $lineItemId
+ * @property int|null $lineItemId
  * @property string $name
  * @property Order $order
  * @property int $orderId
  * @property string $sourceSnapshot
  * @property string $type
+ * @property bool $isEstimated
  * @author Pixel & Tonic, Inc. <support@pixelandtonic.com>
  * @since 2.0
  */
 class OrderAdjustment extends ActiveRecord
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public static function tableName(): string
     {
-        return '{{%commerce_orderadjustments}}';
+        return Table::ORDERADJUSTMENTS;
     }
 
     /**

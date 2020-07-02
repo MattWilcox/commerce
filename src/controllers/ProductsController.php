@@ -11,20 +11,30 @@ use Craft;
 use craft\base\Element;
 use craft\base\Field;
 use craft\commerce\elements\Product;
+use craft\commerce\helpers\Product as ProductHelper;
 use craft\commerce\helpers\VariantMatrix;
 use craft\commerce\models\ProductType;
 use craft\commerce\Plugin;
 use craft\commerce\web\assets\editproduct\EditProductAsset;
 use craft\commerce\web\assets\productindex\ProductIndexAsset;
-use craft\commerce\helpers\Product as ProductHelper;
+use craft\errors\ElementNotFoundException;
+use craft\errors\InvalidElementException;
+use craft\errors\MissingComponentException;
+use craft\errors\SiteNotFoundException;
+use craft\helpers\ArrayHelper;
 use craft\helpers\Json;
 use craft\helpers\UrlHelper;
 use craft\models\Site;
+use Throwable;
 use yii\base\Exception;
+use yii\base\InvalidConfigException;
+use yii\base\Model;
+use yii\web\BadRequestHttpException;
 use yii\web\ForbiddenHttpException;
 use yii\web\HttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\Response;
+use yii\web\ServerErrorHttpException;
 
 /**
  * Class Products Controller
@@ -34,9 +44,6 @@ use yii\web\Response;
  */
 class ProductsController extends BaseCpController
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
@@ -48,7 +55,7 @@ class ProductsController extends BaseCpController
 
     /**
      * @return Response
-     * @throws \yii\base\InvalidConfigException
+     * @throws InvalidConfigException
      */
     public function actionProductIndex(): Response
     {
@@ -74,16 +81,12 @@ class ProductsController extends BaseCpController
      * @throws ForbiddenHttpException
      * @throws HttpException
      * @throws NotFoundHttpException
-     * @throws \craft\errors\SiteNotFoundException
-     * @throws \yii\base\InvalidConfigException
+     * @throws SiteNotFoundException
+     * @throws InvalidConfigException
      */
     public function actionEditProduct(string $productTypeHandle, int $productId = null, string $siteHandle = null, Product $product = null): Response
     {
-        $variables = [
-            'productTypeHandle' => $productTypeHandle,
-            'productId' => $productId,
-            'product' => $product
-        ];
+        $variables = compact('productTypeHandle', 'productId', 'product');
 
         if ($siteHandle !== null) {
             $variables['site'] = Craft::$app->getSites()->getSiteByHandle($siteHandle);
@@ -95,10 +98,13 @@ class ProductsController extends BaseCpController
 
         $this->_prepEditProductVariables($variables);
 
-        if (!empty($variables['product']->id)) {
-            $variables['title'] = $variables['product']->title;
+        /** @var Product $product */
+        $product = $variables['product'];
+
+        if ($product->id === null) {
+            $variables['title'] = Plugin::t('Create a new product');
         } else {
-            $variables['title'] = Craft::t('commerce', 'Create a new product');
+            $variables['title'] = $product->title;
         }
 
         // Can't just use the entry's getCpEditUrl() because that might include the site handle when we don't want it
@@ -110,8 +116,8 @@ class ProductsController extends BaseCpController
 
         $this->_prepVariables($variables);
 
-        if ($variables['product']->getType()->hasVariants) {
-            $variables['variantMatrixHtml'] = VariantMatrix::getVariantMatrixHtml($variables['product']);
+        if ($product->getType()->hasVariants) {
+            $variables['variantMatrixHtml'] = VariantMatrix::getVariantMatrixHtml($product);
         } else {
             $this->getView()->registerJs('Craft.Commerce.initUnlimitedStockCheckbox($("#details"));');
         }
@@ -120,27 +126,27 @@ class ProductsController extends BaseCpController
         if (!Craft::$app->getRequest()->isMobileBrowser(true) && Plugin::getInstance()->getProductTypes()->isProductTypeTemplateValid($variables['productType'], $variables['site']->id)) {
             $this->getView()->registerJs('Craft.LivePreview.init(' . Json::encode([
                     'fields' => '#title-field, #fields > div > div > .field',
-                    'extraFields' => '#meta-pane',
-                    'previewUrl' => $variables['product']->getUrl(),
-                    'previewAction' => 'commerce/products-preview/preview-product',
+                    'extraFields' => '#details',
+                    'previewUrl' => $product->getUrl(),
+                    'previewAction' => Craft::$app->getSecurity()->hashData('commerce/products-preview/preview-product'),
                     'previewParams' => [
                         'typeId' => $variables['productType']->id,
-                        'productId' => $variables['product']->id,
-                        'siteId' => $variables['product']->siteId,
+                        'productId' => $product->id,
+                        'siteId' => $product->siteId,
                     ]
                 ]) . ');');
 
             $variables['showPreviewBtn'] = true;
 
             // Should we show the Share button too?
-            if ($variables['product']->id) {
+            if ($product->id !== null) {
                 // If the product is enabled, use its main URL as its share URL.
-                if ($variables['product']->getStatus() == Product::STATUS_LIVE) {
-                    $variables['shareUrl'] = $variables['product']->getUrl();
+                if ($product->getStatus() == Product::STATUS_LIVE) {
+                    $variables['shareUrl'] = $product->getUrl();
                 } else {
                     $variables['shareUrl'] = UrlHelper::actionUrl('commerce/products-preview/share-product', [
-                        'productId' => $variables['product']->id,
-                        'siteId' => $variables['product']->siteId
+                        'productId' => $product->id,
+                        'siteId' => $product->siteId
                     ]);
                 }
             }
@@ -156,7 +162,7 @@ class ProductsController extends BaseCpController
      * Deletes a product.
      *
      * @throws Exception if you try to edit a non existing Id.
-     * @throws \Throwable
+     * @throws Throwable
      */
     public function actionDeleteProduct()
     {
@@ -166,19 +172,18 @@ class ProductsController extends BaseCpController
         $product = Plugin::getInstance()->getProducts()->getProductById($productId);
 
         if (!$product) {
-            throw new Exception(Craft::t('commerce', 'No product exists with the ID “{id}”.',
+            throw new Exception(Plugin::t('No product exists with the ID “{id}”.',
                 ['id' => $productId]));
         }
 
         $this->enforceProductPermissions($product);
 
         if (!Craft::$app->getElements()->deleteElement($product)) {
-
             if (Craft::$app->getRequest()->getAcceptsJson()) {
                 return $this->asJson(['success' => false]);
             }
 
-            Craft::$app->getSession()->setError(Craft::t('commerce', 'Couldn’t delete product.'));
+            Craft::$app->getSession()->setError(Plugin::t('Couldn’t delete product.'));
             Craft::$app->getUrlManager()->setRouteParams([
                 'product' => $product
             ]);
@@ -188,52 +193,128 @@ class ProductsController extends BaseCpController
             return $this->asJson(['success' => true]);
         }
 
-        Craft::$app->getSession()->setNotice(Craft::t('commerce', 'Product deleted.'));
+        Craft::$app->getSession()->setNotice(Plugin::t('Product deleted.'));
         return $this->redirectToPostedUrl($product);
     }
 
     /**
      * Save a new or existing product.
      *
+     * @param bool $duplicate Whether the product should be duplicated
      * @return Response|null
      * @throws Exception
      * @throws HttpException
-     * @throws \Throwable
-     * @throws \craft\errors\ElementNotFoundException
-     * @throws \craft\errors\MissingComponentException
-     * @throws \yii\web\BadRequestHttpException
+     * @throws Throwable
+     * @throws ElementNotFoundException
+     * @throws MissingComponentException
+     * @throws BadRequestHttpException
      */
-    public function actionSaveProduct()
+    public function actionSaveProduct(bool $duplicate = false)
     {
         $this->requirePostRequest();
 
+        // Get the requested product
         $request = Craft::$app->getRequest();
+        $oldProduct = ProductHelper::productFromPost($request);
+        $variants = $request->getBodyParam('variants');
+        $this->enforceProductPermissions($oldProduct);
+        $elementsService = Craft::$app->getElements();
 
-        $product = ProductHelper::populateProductFromPost();
+        $transaction = Craft::$app->getDb()->beginTransaction();
+        try {
+            // If we're duplicating the product, swap $product with the duplicate
+            if ($duplicate) {
+                try {
+                    $originalVariantIds = ArrayHelper::getColumn($oldProduct->getVariants(), 'id');
+                    $product = $elementsService->duplicateElement($oldProduct);
+                    $duplicatedVariantIds = ArrayHelper::getColumn($product->getVariants(), 'id');
 
-        $this->enforceProductPermissions($product);
+                    $newVariants = [];
+                    foreach ($variants as $key => $postedVariant) {
+                        if (strpos($key, 'new') === 0) {
+                            $newVariants[$key] = $postedVariant;
+                        } else {
+                            $index = array_search($key, $originalVariantIds);
+                            if ($index !== false) {
+                                $newVariants[$duplicatedVariantIds[$index]] = $postedVariant;
+                            }
+                        }
+                    }
+                    $variants = $newVariants;
+                } catch (InvalidElementException $e) {
+                    $transaction->rollBack();
 
-        // Save the entry (finally!)
-        if ($product->enabled && $product->enabledForSite) {
-            $product->setScenario(Element::SCENARIO_LIVE);
-        }
+                    /** @var Product $clone */
+                    $clone = $e->element;
 
-        if (!Craft::$app->getElements()->saveElement($product)) {
-            if ($request->getAcceptsJson()) {
-                return $this->asJson([
-                    'success' => false,
-                    'errors' => $product->getErrors(),
-                ]);
+                    if ($request->getAcceptsJson()) {
+                        return $this->asJson([
+                            'success' => false,
+                            'errors' => $clone->getErrors(),
+                        ]);
+                    }
+
+                    Craft::$app->getSession()->setError(Plugin::t('Couldn’t duplicate product.'));
+
+                    // Send the original product back to the template, with any validation errors on the clone
+                    $oldProduct->addErrors($clone->getErrors());
+                    Craft::$app->getUrlManager()->setRouteParams([
+                        'product' => $oldProduct
+                    ]);
+
+                    return null;
+                } catch (\Throwable $e) {
+                    throw new ServerErrorHttpException(Plugin::t('An error occurred when duplicating the product.'), 0, $e);
+                }
+            } else {
+                $product = $oldProduct;
             }
 
-            Craft::$app->getSession()->setError(Craft::t('app', 'Couldn’t save product.'));
+            // Now populate the rest of it from the post data
+            ProductHelper::populateProductFromPost($product, $request);
 
-            // Send the category back to the template
-            Craft::$app->getUrlManager()->setRouteParams([
-                'product' => $product
-            ]);
+            $product->setVariants($variants);
 
-            return null;
+            // Save the product (finally!)
+            if ($product->enabled && $product->enabledForSite) {
+                $product->setScenario(Element::SCENARIO_LIVE);
+            }
+
+            $success = $elementsService->saveElement($product);
+            if (!$success && $duplicate && $product->getScenario() === Element::SCENARIO_LIVE) {
+                // Try again with the product disabled
+                $product->enabled = false;
+                $product->setScenario(Model::SCENARIO_DEFAULT);
+                $success = $elementsService->saveElement($product);
+            }
+
+            if (!$success) {
+                $transaction->rollBack();
+
+                if ($request->getAcceptsJson()) {
+                    return $this->asJson([
+                        'success' => false,
+                        'errors' => $product->getErrors(),
+                    ]);
+                }
+
+                Craft::$app->getSession()->setError(Plugin::t('Couldn’t save product.'));
+
+                if ($duplicate) {
+                    // Add validation errors on the original product
+                    $oldProduct->addErrors($product->getErrors());
+                }
+                Craft::$app->getUrlManager()->setRouteParams([
+                    'product' => $oldProduct
+                ]);
+
+                return null;
+            }
+
+            $transaction->commit();
+        } catch (\Throwable $e) {
+            $transaction->rollBack();
+            throw $e;
         }
 
         if ($request->getAcceptsJson()) {
@@ -247,30 +328,36 @@ class ProductsController extends BaseCpController
             ]);
         }
 
-        Craft::$app->getSession()->setNotice(Craft::t('app', 'Product saved.'));
+        Craft::$app->getSession()->setNotice(Plugin::t('Product saved.'));
 
         return $this->redirectToPostedUrl($product);
     }
 
-    // Protected Methods
-    // =========================================================================
+    /**
+     * Duplicates a product.
+     *
+     * @return Response|null
+     * @since 3.1.3
+     */
+    public function actionDuplicateProduct()
+    {
+        return $this->runAction('save-product', ['duplicate' => true]);
+    }
 
     /**
      * @param Product $product
      * @throws HttpException
-     * @throws \yii\base\InvalidConfigException
+     * @throws InvalidConfigException
      */
     protected function enforceProductPermissions(Product $product)
     {
-        $this->requirePermission('commerce-manageProductType:' . $product->getType()->id);
+        $this->requirePermission('commerce-manageProductType:' . $product->getType()->uid);
     }
 
-    // Private Methods
-    // =========================================================================
 
     /**
      * @param array $variables
-     * @throws \yii\base\InvalidConfigException
+     * @throws InvalidConfigException
      */
     private function _prepVariables(array &$variables)
     {
@@ -294,7 +381,7 @@ class ProductsController extends BaseCpController
             }
 
             $variables['tabs'][] = [
-                'label' => Craft::t('commerce', $tab->name),
+                'label' => Plugin::t($tab->name),
                 'url' => '#tab' . ($index + 1),
                 'class' => $hasErrors ? 'error' : null
             ];
@@ -313,21 +400,28 @@ class ProductsController extends BaseCpController
             }
 
             $variables['tabs'][] = [
-                'label' => Craft::t('commerce', 'Variants'),
+                'label' => Plugin::t('Variants'),
                 'url' => '#variants-container',
                 'class' => $hasErrors ? 'error' : null
             ];
         }
 
         $sales = [];
+        $discounts = [];
         foreach ($product->getVariants() as $variant) {
             $variantSales = Plugin::getInstance()->getSales()->getSalesRelatedToPurchasable($variant);
             foreach ($variantSales as $sale) {
                 $sales[$sale->id] = $sale;
             }
+
+            $variantDiscounts = Plugin::getInstance()->getDiscounts()->getDiscountsRelatedToPurchasable($variant);
+            foreach ($variantDiscounts as $discount) {
+                $discounts[$discount->id] = $discount;
+            }
         }
 
         $variables['sales'] = $sales;
+        $variables['discounts'] = $discounts;
     }
 
     /**
@@ -335,8 +429,8 @@ class ProductsController extends BaseCpController
      * @throws ForbiddenHttpException
      * @throws HttpException
      * @throws NotFoundHttpException
-     * @throws \craft\errors\SiteNotFoundException
-     * @throws \yii\base\InvalidConfigException
+     * @throws SiteNotFoundException
+     * @throws InvalidConfigException
      */
     private function _prepEditProductVariables(array &$variables)
     {
@@ -386,7 +480,7 @@ class ProductsController extends BaseCpController
         }
 
         if (empty($variables['productType'])) {
-            throw new HttpException(400, craft::t('commerce', 'Wrong product type specified'));
+            throw new HttpException(400, Plugin::t('Wrong product type specified'));
         }
 
         // Get the product

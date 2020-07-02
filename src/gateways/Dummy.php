@@ -8,7 +8,6 @@
 namespace craft\commerce\gateways;
 
 use Craft;
-use craft\commerce\base\CancelSubscriptionHtml;
 use craft\commerce\base\Plan;
 use craft\commerce\base\RequestResponseInterface;
 use craft\commerce\base\SubscriptionGateway;
@@ -38,16 +37,24 @@ use craft\web\View;
  */
 class Dummy extends SubscriptionGateway
 {
-    // Public Methods
-    // =========================================================================
-
     /**
      * @inheritdoc
      */
     public function getPaymentFormHtml(array $params)
     {
+        $paymentFormModel = $this->getPaymentFormModel();
+
+        if(Craft::$app->getConfig()->general->devMode)
+        {
+            $paymentFormModel->firstName = 'Jenny';
+            $paymentFormModel->lastName = 'Andrews';
+            $paymentFormModel->number = '4242424242424242';
+            $paymentFormModel->expiry = '01/2023';
+            $paymentFormModel->cvv = '123';
+        }
+
         $defaults = [
-            'paymentForm' => $this->getPaymentFormModel()
+            'paymentForm' => $paymentFormModel
         ];
 
         $params = array_merge($defaults, $params);
@@ -274,9 +281,9 @@ class Dummy extends SubscriptionGateway
      */
     public function cancelSubscription(Subscription $subscription, CancelSubscriptionForm $parameters): SubscriptionResponseInterface
     {
-        $subscription = new DummySubscriptionResponse();
-        $subscription->setIsCanceled(true);
-        return $subscription;
+        $response = new DummySubscriptionResponse();
+        $response->setIsCanceled(true);
+        return $response;
     }
 
     /**
@@ -344,5 +351,29 @@ class Dummy extends SubscriptionGateway
     public function supportsPlanSwitch(): bool
     {
         return true;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getBillingIssueDescription(Subscription $subscription): string
+    {
+        return '';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getBillingIssueResolveFormHtml(Subscription $subscription): string
+    {
+        return '';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getHasBillingIssues(Subscription $subscription): bool
+    {
+        return false;
     }
 }
